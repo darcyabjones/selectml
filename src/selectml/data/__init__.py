@@ -7,7 +7,6 @@ def basic():
     from numpy.lib import recfunctions as rfn
 
     with path(__name__, "basic.tsv") as handler:
-        fname = str(handler)
         arr = np.recfromcsv(handler, delimiter="\t")
 
     X = (

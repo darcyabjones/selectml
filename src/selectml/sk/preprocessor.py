@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
 
-
 class Unity(TransformerMixin, BaseEstimator):
     """A dummy transformer that does nothing.
 
@@ -255,7 +254,44 @@ class MarkerMAFScaler(TransformerMixin, BaseEstimator):
 
 
 class PercentileRankTransformer(TransformerMixin, BaseEstimator):
-    """Convert continuous variables into a quantised ranks """
+    """Convert continuous variables into a quantised ranks.
+
+    This is useful for transforming response variables.
+
+    Examples:
+
+    To quantise by the 25-, 50- and 75-th percentiles, do
+
+    >>> from selectml.sk.preprocessor import PercentileRankTransformer
+    >>> from selectml.data import basic
+    >>> _, y, _ = basic()
+    >>> PercentileRankTransformer([25, 50, 75]).fit_transform(y.reshape((-1, 1)))
+    array([[3.],
+           [3.],
+           [3.],
+           [3.],
+           [3.],
+           [0.],
+           [0.],
+           [0.],
+           [0.],
+           [0.],
+           [2.],
+           [2.],
+           [2.],
+           [2.],
+           [3.],
+           [1.],
+           [2.],
+           [0.],
+           [1.],
+           [1.],
+           [1.],
+           [1.],
+           [1.],
+           [2.],
+           [0.]])
+    """
 
     requires_y: bool = False
 
