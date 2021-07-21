@@ -41,4 +41,4 @@ jobs:
         pytest src
     - name: Test with mypy
       run: |
-        mypy src
+        mypy --ignore-missing-imports src
