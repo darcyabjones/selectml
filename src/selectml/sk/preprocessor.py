@@ -32,7 +32,12 @@ class Unity(TransformerMixin, BaseEstimator):
         """
         return
 
-    def fit(self, X: "npt.ArrayLike", y: "Optional[npt.ArrayLike]" = None) -> "Unity":
+    def fit(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None,
+        **kwargs,
+    ) -> "Unity":
         """Compute the mean and std to be used for later scaling.
         Parameters
         ----------
@@ -49,7 +54,7 @@ class Unity(TransformerMixin, BaseEstimator):
 
         return self
 
-    def transform(self, X: "npt.ArrayLike") -> "npt.ArrayLike":
+    def transform(self, X: "npt.ArrayLike") -> np.ndarray:
         """Scale features of X according to feature_range.
         Parameters
         ----------
@@ -60,9 +65,9 @@ class Unity(TransformerMixin, BaseEstimator):
         Xt : ndarray of shape (n_samples, n_features)
             Transformed data.
         """
-        return X
+        return np.array(X)
 
-    def inverse_transform(self, X: "npt.ArrayLike") -> "npt.ArrayLike":
+    def inverse_transform(self, X: "npt.ArrayLike") -> np.ndarray:
         """Undo the scaling of X according to feature_range.
         Parameters
         ----------
@@ -73,23 +78,24 @@ class Unity(TransformerMixin, BaseEstimator):
         Xt : ndarray of shape (n_samples, n_features)
             Transformed data.
         """
-        return X
+        return np.array(X)
 
 
-class MarkerMAFScaler(TransformerMixin, BaseEstimator):
+class MAFScaler(TransformerMixin, BaseEstimator):
     """Scale each marker by the minor allele frequency
 
     This is the same scaling applied to the Van Raden similarity computation
-    before the dot-product is taken. It is somewhat analogous to mean-centering.
+    before the dot-product is taken.
+    It is somewhat analogous to mean-centering.
 
     Examples:
 
     >>> import numpy as np
-    >>> from selectml.sk.preprocessor import MarkerMAFScaler
+    >>> from selectml.sk.preprocessor import MAFScaler
     >>> from selectml.data import basic
     >>> X, _, _ = basic()
     >>> X = np.unique(X, axis=0)
-    >>> MarkerMAFScaler().fit_transform(X)
+    >>> MAFScaler().fit_transform(X)
     array([[-1.4, -0.4, -0.4,  0.6,  0.2, -0.2, -0.8, -1. ,  0.2, -0.4],
            [-0.4,  1.6,  0.6, -0.4,  0.2, -0.2,  1.2, -1. ,  0.2, -0.4],
            [ 0.6, -0.4, -1.4,  0.6, -0.8,  0.8, -0.8,  1. ,  1.2, -0.4],
@@ -118,7 +124,11 @@ class MarkerMAFScaler(TransformerMixin, BaseEstimator):
             del self.allele_counts_
             del self.P_
 
-    def partial_fit(self, X: "npt.ArrayLike", y: "Optional[npt.ArrayLike]" = None) -> "MarkerMAFScaler":
+    def partial_fit(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None
+    ) -> "MAFScaler":
         """Online computation of min and max on X for later scaling.
         All of X is processed as a single batch. This is intended for cases
         when :meth:`fit` is not feasible due to very large number of
@@ -169,14 +179,18 @@ class MarkerMAFScaler(TransformerMixin, BaseEstimator):
             self.allele_counts_ += (self.ploidy - X_).sum(axis=0)
 
         # Frequency of alternate allele
-        p_i: np.ndarray = self.allele_counts_ / (self.ploidy * self.n_samples_seen_)
+        p_i = self.allele_counts_ / (self.ploidy * self.n_samples_seen_)
         self.P_: np.ndarray = self.ploidy * (p_i - 0.5)
 
         self.n_features_in_: int = self.P_.shape[0]
         self.n_features_ = self.n_features_in_
         return self
 
-    def fit(self, X: "npt.ArrayLike", y: "Optional[npt.ArrayLike]" = None) -> "MarkerMAFScaler":
+    def fit(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None
+    ) -> "MAFScaler":
         """Compute the mean and std to be used for later scaling.
         Parameters
         ----------
@@ -265,7 +279,8 @@ class PercentileRankTransformer(TransformerMixin, BaseEstimator):
     >>> from selectml.sk.preprocessor import PercentileRankTransformer
     >>> from selectml.data import basic
     >>> _, y, _ = basic()
-    >>> PercentileRankTransformer([25, 50, 75]).fit_transform(y.reshape((-1, 1)))
+    >>> PercentileRankTransformer([25, 50, 75])\
+         .fit_transform(y.reshape((-1, 1)))
     array([[3.],
            [3.],
            [3.],
@@ -322,7 +337,11 @@ class PercentileRankTransformer(TransformerMixin, BaseEstimator):
             del self.percentiles_
         return self
 
-    def fit(self, X: "npt.ArrayLike", y: "Optional[npt.ArrayLike]" = None) -> "PercentileRankTransformer":
+    def fit(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None
+    ) -> "PercentileRankTransformer":
         self._reset()
 
         X_: np.ndarray = check_array(
