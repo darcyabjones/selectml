@@ -316,7 +316,7 @@ class RFModel(SKModel):
         return Pipeline([
             ("preprocessor", preprocessor),
             ("model", RandomForestRegressor(
-                criterion="mae",
+                criterion="absolute_error",
                 max_depth=params["max_depth"],
                 n_estimators=params["n_estimators"],
                 max_features=params["max_features"],
@@ -380,7 +380,7 @@ class ExtraTreesModel(SKModel):
             "bootstrap": trial.suggest_categorical("bootstrap", [True, False]),
             "n_estimators": trial.suggest_int("n_estimators", 50, 1000),
             "max_depth": trial.suggest_int("max_depth", 3, 30),
-            "max_samples": trial.suggest_int("max_samples", 1, 127),
+            "max_samples": trial.suggest_int("max_samples", 50, 1000),
             "min_samples_split": trial.suggest_int("min_samples_split", 2, 50),
             "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 20),
             "min_impurity_decrease": trial.suggest_float(
@@ -414,7 +414,7 @@ class ExtraTreesModel(SKModel):
         return Pipeline([
             ("preprocessor", preprocessor),
             ("model", ExtraTreesRegressor(
-                criterion="mae",
+                criterion="absolute_error",
                 max_depth=params["max_depth"],
                 n_estimators=params["n_estimators"],
                 max_features=params["max_features"],
@@ -443,7 +443,7 @@ class ExtraTreesModel(SKModel):
                 "interactions": "drop",
                 "max_depth": 3,
                 "n_estimators": 500,
-                "max_samples": 50,
+                "max_samples": 100,
                 "max_features": 50,
                 "min_samples_split": 2,
                 "min_samples_leaf": 10,
@@ -493,8 +493,8 @@ class NGBModel(SKModel):
             "col_sample": trial.suggest_float("col_sample", 0.1, 0.5),
             "learning_rate": trial.suggest_float(
                 "learning_rate",
-                1e-4,
-                0.1,
+                1e-6,
+                1.0,
                 log=True
             ),
             "natural_gradient": trial.suggest_categorical(
@@ -593,7 +593,7 @@ class SVRModel(SKModel):
                 "loss",
                 ['epsilon_insensitive', 'squared_epsilon_insensitive']
             ),
-            "epsilon": trial.suggest_float("epsilon", 1e-10, 100, log=True),
+            "epsilon": trial.suggest_float("epsilon", 0, 5),
             "C": trial.suggest_float("C", 1e-10, 10),
             "intercept_scaling": trial.suggest_float(
                 "intercept_scaling",
@@ -619,7 +619,7 @@ class SVRModel(SKModel):
                 ("model", LinearSVR(
                     random_state=self.seed,
                     fit_intercept=True,
-                    max_iter=100000,
+                    max_iter=10 * len(self.marker_columns),
                     dual=params["dual"],
                     C=params["C"],
                     epsilon=params["epsilon"],
@@ -676,7 +676,7 @@ class ElasticNetDistModel(SKModel):
     def sample_params(self, trial: "optuna.Trial") -> Dict[str, BaseTypes]:
         params = self.sample_preprocessing_params(
             trial,
-            target_options=["passthrough", "stdnorm", "quantile"],
+            target_options=["stdnorm", "quantile"],
             marker_options=["maf"],
             dist_options=["vanraden"],
             nonlinear_options=["drop", "rbf", "laplacian", "poly"],
@@ -703,7 +703,7 @@ class ElasticNetDistModel(SKModel):
                 ("model", ElasticNet(
                     random_state=self.seed,
                     fit_intercept=True,
-                    max_iter=100000,
+                    max_iter=10 * len(self.marker_columns),
                     selection="random",
                     alpha=params["alpha"],
                     l1_ratio=params["l1_ratio"],
@@ -724,6 +724,19 @@ class ElasticNetDistModel(SKModel):
                 "nonlinear_preprocessor": "drop",
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
+                "alpha": 1,
+                "l1_ratio": 0.5,
+            },
+            {
+                "train_means": True,
+                "weight": "none",
+                "target_options": "passthrough",
+                "marker_preprocessor": "maf",
+                "feature_selector": "drop",
+                "dist_preprocessor": "vanraden",
+                "nonlinear_preprocessor": "drop",
+                "grouping_preprocessor": "onehot",
+                "interactions": "drop",
                 "alpha": 10,
                 "l1_ratio": 0.5,
             },
@@ -738,7 +751,7 @@ class ElasticNetDistModel(SKModel):
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
                 "poly_gamma": 1,
-                "alpha": 10,
+                "alpha": 1,
                 "l1_ratio": 0.5,
             },
             {
@@ -751,7 +764,7 @@ class ElasticNetDistModel(SKModel):
                 "nonlinear_preprocessor": "drop",
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
-                "alpha": 10,
+                "alpha": 1,
                 "l1_ratio": 0.0,
             },
             {
@@ -765,7 +778,7 @@ class ElasticNetDistModel(SKModel):
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
                 "poly_gamma": 1,
-                "alpha": 10,
+                "alpha": 1,
                 "l1_ratio": 0.0,
             },
             {
@@ -778,7 +791,7 @@ class ElasticNetDistModel(SKModel):
                 "nonlinear_preprocessor": "drop",
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
-                "alpha": 10,
+                "alpha": 1,
                 "l1_ratio": 1.0,
             },
             {
@@ -792,7 +805,7 @@ class ElasticNetDistModel(SKModel):
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
                 "poly_gamma": 1,
-                "alpha": 10,
+                "alpha": 1,
                 "l1_ratio": 1.0,
             },
         ]
@@ -805,7 +818,7 @@ class LassoLarsDistModel(SKModel):
     def sample_params(self, trial: "optuna.Trial") -> Dict[str, BaseTypes]:
         params = self.sample_preprocessing_params(
             trial,
-            target_options=["passthrough", "stdnorm", "quantile"],
+            target_options=["stdnorm", "quantile"],
             marker_options=["maf"],
             dist_options=["vanraden"],
             nonlinear_options=["drop", "rbf", "laplacian", "poly"],
@@ -831,7 +844,7 @@ class LassoLarsDistModel(SKModel):
                 ("model", LassoLars(
                     alpha=params["alpha"],
                     fit_intercept=True,
-                    max_iter=100000,
+                    max_iter=10 * len(self.marker_columns),
                     random_state=self.seed,
                 ))
             ]),
@@ -840,6 +853,18 @@ class LassoLarsDistModel(SKModel):
 
     def starting_points(self) -> List[Dict[str, BaseTypes]]:
         return [
+            {
+                "train_means": True,
+                "weight": "none",
+                "target_options": "passthrough",
+                "marker_preprocessor": "maf",
+                "feature_selector": "drop",
+                "dist_preprocessor": "vanraden",
+                "nonlinear_preprocessor": "drop",
+                "grouping_preprocessor": "onehot",
+                "interactions": "drop",
+                "alpha": 1,
+            },
             {
                 "train_means": True,
                 "weight": "none",
@@ -863,7 +888,7 @@ class LassoLarsDistModel(SKModel):
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
                 "dist_poly_gamma": 1,
-                "alpha": 10,
+                "alpha": 1,
             },
         ]
 
@@ -875,7 +900,7 @@ class LassoLarsModel(SKModel):
     def sample_params(self, trial: "optuna.Trial") -> Dict[str, BaseTypes]:
         params = self.sample_preprocessing_params(
             trial,
-            target_options=["passthrough", "stdnorm", "quantile"],
+            target_options=["stdnorm", "quantile"],
             marker_options=["maf"],
             dist_options=["drop", "vanraden"],
             nonlinear_options=["drop", "rbf", "laplacian", "poly"],
@@ -901,7 +926,7 @@ class LassoLarsModel(SKModel):
                 ("model", LassoLars(
                     alpha=params["alpha"],
                     fit_intercept=True,
-                    max_iter=500000,
+                    max_iter=10 * len(self.marker_columns),
                     random_state=self.seed,
                 ))
             ]),
@@ -920,7 +945,7 @@ class LassoLarsModel(SKModel):
                 "nonlinear_preprocessor": "drop",
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
-                "alpha": 10,
+                "alpha": 1,
             },
             {
                 "train_means": True,
@@ -932,6 +957,18 @@ class LassoLarsModel(SKModel):
                 "nonlinear_preprocessor": "drop",
                 "grouping_preprocessor": "onehot",
                 "interactions": "poly",
+                "alpha": 1,
+            },
+            {
+                "train_means": True,
+                "weight": "none",
+                "target_options": "passthrough",
+                "marker_preprocessor": "maf",
+                "feature_selector": "passthrough",
+                "dist_preprocessor": "drop",
+                "nonlinear_preprocessor": "drop",
+                "grouping_preprocessor": "onehot",
+                "interactions": "drop",
                 "alpha": 10,
             },
         ]
@@ -944,7 +981,7 @@ class ElasticNetModel(SKModel):
     def sample_params(self, trial: "optuna.Trial") -> Dict[str, BaseTypes]:
         params = self.sample_preprocessing_params(
             trial,
-            target_options=["passthrough", "stdnorm", "quantile"],
+            target_options=["stdnorm", "quantile"],
             marker_options=["maf"],
             dist_options=["drop", "vanraden"],
             nonlinear_options=["drop", "rbf", "laplacian", "poly"],
@@ -971,7 +1008,7 @@ class ElasticNetModel(SKModel):
                 ("model", ElasticNet(
                     random_state=self.seed,
                     fit_intercept=True,
-                    max_iter=100000,
+                    max_iter=10 * len(self.marker_columns),
                     selection="random",
                     alpha=params["alpha"],
                     l1_ratio=params["l1_ratio"],
@@ -992,7 +1029,7 @@ class ElasticNetModel(SKModel):
                 "nonlinear_preprocessor": "drop",
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
-                "alpha": 0.0,
+                "alpha": 1.0,
                 "l1_ratio": 0.5,
             },
             {
@@ -1005,7 +1042,7 @@ class ElasticNetModel(SKModel):
                 "nonlinear_preprocessor": "drop",
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
-                "alpha": 10,
+                "alpha": 10.0,
                 "l1_ratio": 0.5,
             },
             {
@@ -1018,7 +1055,7 @@ class ElasticNetModel(SKModel):
                 "nonlinear_preprocessor": "drop",
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
-                "alpha": 10,
+                "alpha": 1.0,
                 "l1_ratio": 0.0,
             },
             {
@@ -1031,7 +1068,7 @@ class ElasticNetModel(SKModel):
                 "nonlinear_preprocessor": "drop",
                 "grouping_preprocessor": "onehot",
                 "interactions": "drop",
-                "alpha": 10,
+                "alpha": 1.0,
                 "l1_ratio": 1.0,
             },
         ]
@@ -1059,7 +1096,7 @@ class TFWrapper(object):
         y,
         individuals,
         sample_weight,
-        proportion=0.2
+        proportion=0.1
     ):
         rng = np.random.default_rng()
 
@@ -1071,18 +1108,18 @@ class TFWrapper(object):
 
         val_tup = (
             X_markers[val],
-            X_grouping[val],
+            X_grouping[val] if X_grouping is not None else None,
             y[val],
             individuals[val],
-            sample_weight[val],
+            sample_weight[val] if sample_weight is not None else None,
         )
 
         train_tup = (
             X_markers[~val],
-            X_grouping[~val],
+            X_grouping[~val] if X_grouping is not None else None,
             y[~val],
             individuals[~val],
-            sample_weight[~val],
+            sample_weight[~val] if sample_weight is not None else None,
         )
         return train_tup, val_tup
 
@@ -1119,20 +1156,29 @@ class TFWrapper(object):
                 individuals=individuals
             )
 
-        channel = self._np_to_channels(X_markers, X_grouping, y, sample_weight)
+        train_ch, val_ch = self._np_to_channels_validation(
+            X_markers,
+            X_grouping,
+            y,
+            individuals,
+            sample_weight,
+            proportion=0.1
+        )
 
         early_callback = tf.keras.callbacks.EarlyStopping(
-            monitor='loss',
-            min_delta=0.01,
-            patience=20
+            monitor='val_loss',
+            min_delta=0.1,
+            patience=20,
+            restore_best_weights=True,
         )
 
         self.model.compile(optimizer="adam", loss="mae", metrics=["mae"])
 
         _ = self.model.fit(
-            channel.shuffle(1024).batch(64),
+            train_ch.shuffle(1024).batch(64),
             epochs=500,
             verbose=0,
+            validation_data=val_ch.batch(64),
             callbacks=[early_callback]
         )
         return self
@@ -1140,7 +1186,10 @@ class TFWrapper(object):
     def predict(self, X: "Tuple[npt.ArrayLike, Optional[npt.ArrayLike]]"):
         X_markers_, X_grouping_ = X
         X_markers = np.array(X_markers_)
-        X_grouping = np.array(X_grouping_)
+        if X_grouping_ is not None:
+            X_grouping: Optional[np.ndarray] = np.array(X_grouping_)
+        else:
+            X_grouping = None
         del X_markers_, X_grouping_
 
         if (X_grouping is not None) and (self.group_trans is not None):
@@ -1163,6 +1212,30 @@ class TFWrapper(object):
             )
 
         return preds
+
+    def _np_to_channels_validation(
+        self,
+        X_markers,
+        X_grouping,
+        y,
+        individuals,
+        sample_weights,
+        proportion=0.1,
+    ):
+        train_tup, val_tup = self.get_validation_samples(
+            X_markers,
+            X_grouping,
+            y,
+            individuals,
+            sample_weights
+        )
+
+        (mar, gro, y_, indiv, wei) = train_tup
+        train_ch = self._np_to_channels(mar, gro, y_, wei)
+
+        (mar, gro, y_, indiv, wei) = val_tup
+        val_ch = self._np_to_channels(mar, gro, y_, wei)
+        return train_ch, val_ch
 
     def _np_to_channels(
         self,
@@ -1205,29 +1278,69 @@ class ConvModel(TFBaseModel):
             feature_selection_options=["passthrough", "relief"],
         )
 
-        params["conv_nlayers"] = trial.suggest_int("conv_nlayers", 1, 3)
-        params["conv_filters"] = trial.suggest_int("conv_filters", 1, 4)
-        params["conv_kernel_size"] = trial.suggest_int(
-            "conv_kernel_size",
-            2,
-            5
+        nmarkers = len(self.marker_columns)
+        if "feature_selection_nfeatures" in params:
+            assert isinstance(params["feature_selection_nfeatures"], int)
+            nmarkers = params["feature_selection_nfeatures"]
+
+        if nmarkers < 30:
+            max_conv_levels = 0
+        elif nmarkers < 100:
+            max_conv_levels = 1
+        elif nmarkers < 200:
+            max_conv_levels = 2
+        else:
+            max_conv_levels = 3
+
+        params["conv_nlayers"] = trial.suggest_int(
+            "conv_nlayers",
+            0,
+            max_conv_levels
         )
-        params["conv_strides"] = trial.suggest_int(
-            "conv_strides",
-            2,
-            params["conv_kernel_size"]
-        )
-        params["conv_l1"] = trial.suggest_float("conv_l1", 1e-50, 50, log=True)
-        params["conv_l2"] = trial.suggest_float("conv_l2", 1e-50, 50, log=True)
-        params["conv_activation"] = trial.suggest_categorical(
-            "conv_activation",
-            ["linear", "relu"]
-        )
-        params["conv_use_bn"] = trial.suggest_categorical(
-            "conv_use_bn",
-            [True, False]
-        )
+        assert isinstance(params["conv_nlayers"], int)
+        if params["conv_nlayers"] > 0:
+            params["conv_filters"] = trial.suggest_int("conv_filters", 1, 4)
+            params["conv_kernel_size"] = trial.suggest_int(
+                "conv_kernel_size",
+                2,
+                5
+            )
+
+            assert isinstance(params["conv_kernel_size"], int)
+            max_stride = params["conv_kernel_size"]
+            while (
+                (nmarkers / (max_stride ** params["conv_nlayers"]))
+                < (2 * params["conv_kernel_size"])
+            ):
+                # Avoid zero-division error in whie
+                if max_stride <= 1:
+                    max_stride = 1
+                    break
+                max_stride -= 1
+
+            params["conv_strides"] = trial.suggest_int(
+                "conv_strides",
+                2,
+                max_stride
+            )
+            params["conv_l1"] = trial.suggest_float(
+                "conv_l1", 1e-50, 50, log=True)
+            params["conv_l2"] = trial.suggest_float(
+                "conv_l2", 1e-50, 50, log=True)
+            params["conv_activation"] = trial.suggest_categorical(
+                "conv_activation",
+                ["linear", "relu"]
+            )
+            params["conv_use_bn"] = trial.suggest_categorical(
+                "conv_use_bn",
+                [True, False]
+            )
+
         params["dropout_rate"] = trial.suggest_float("dropout_rate", 0, 1)
+
+        params["marker_adaptaptive_l1"] = trial.suggest_categorical(
+            "marker_adaptaptive_l1", [True, False]
+        )
 
         params["marker_l1"] = trial.suggest_float(
             "marker_l1",
@@ -1256,11 +1369,22 @@ class ConvModel(TFBaseModel):
                 log=True
             )
 
+        params["use_rank_loss"] = trial.suggest_categorical(
+            "use_rank_loss",
+            [True, False]
+        )
+        if params["use_rank_loss"]:
+            params["rank_loss"] = trial.suggest_float(
+                "rank_loss",
+                1e-20, 5, log=True
+            )
+
         return params
 
     def model(self, params: Dict[str, Any]):
         from selectml.tf.layers import AddChannel, Flatten1D, ConvLinkage
         from selectml.tf.models import SSModel
+        from selectml.tf.regularizers import AdaptiveL1L2Regularizer
         from tensorflow.keras.layers import Dropout, Dense
         from tensorflow.keras.regularizers import L1L2
         from tensorflow.keras.models import Sequential
@@ -1271,29 +1395,45 @@ class ConvModel(TFBaseModel):
             marker_trans
         ) = self.sample_preprocessing_model(params)
 
-        marker_model = Sequential([
-            AddChannel(),
-            ConvLinkage(
-                nlayers=params["conv_nlayers"],
-                filters=params["conv_filters"],
-                strides=params["conv_strides"],
-                kernel_size=params["conv_kernel_size"],
-                activation=params["conv_activation"],
-                activation_first=params["conv_activation"],
-                activation_last=params["conv_activation"],
-                kernel_regularizer=L1L2(
-                    params["conv_l1"],
-                    params["conv_l2"],
+        marker_model_list = []
+        if params["conv_nlayers"] > 0:
+            marker_model_list.extend([
+                AddChannel(),
+                ConvLinkage(
+                    nlayers=params["conv_nlayers"],
+                    filters=params["conv_filters"],
+                    strides=params["conv_strides"],
+                    kernel_size=params["conv_kernel_size"],
+                    activation=params["conv_activation"],
+                    activation_first=params["conv_activation"],
+                    activation_last=params["conv_activation"],
+                    kernel_regularizer=L1L2(
+                        params["conv_l1"],
+                        params["conv_l2"],
+                    ),
+                    use_bn=params["conv_use_bn"]
                 ),
-                use_bn=params["conv_use_bn"]
-            ),
-            Flatten1D(),
-            Dropout(params["dropout_rate"]),
-            Dense(1, use_bias=True, kernel_regularizer=L1L2(
+                Flatten1D(),
+            ])
+
+        if params["marker_adaptaptive_l1"]:
+            reg = AdaptiveL1L2Regularizer(
+                l1=params["marker_l1"],
+                l2=params["marker_l2"],
+                adapt=True
+            )
+        else:
+            reg = L1L2(
                 params["marker_l1"],
-                params["marker_l2"])
-            ),
+                params["marker_l2"]
+            )
+
+        marker_model_list.extend([
+            Dropout(params["dropout_rate"]),
+            Dense(1, use_bias=True, kernel_regularizer=reg),
         ])
+
+        marker_model = Sequential(marker_model_list)
 
         if len(self.grouping_columns) > 0:
             group_model = Dense(1, use_bias=True, kernel_regularizer=L1L2(
@@ -1307,6 +1447,7 @@ class ConvModel(TFBaseModel):
             marker_embedder=marker_model,
             env_embedder=group_model,
             combiner="add",
+            rank_loss=params.get("rank_loss", None),
         )
 
         return TFWrapper(
@@ -1318,6 +1459,45 @@ class ConvModel(TFBaseModel):
 
     def starting_points(self) -> List[Dict[str, BaseTypes]]:
         return [
+            {
+                "train_means": True,
+                "weight": "none",
+                "target_options": "stdnorm",
+                "min_maf": 0.05,
+                "marker_preprocessor": "maf",
+                "feature_selector": "passthrough",
+                "conv_nlayers": 2,
+                "conv_filters": 1,
+                "conv_kernel_size": 3,
+                "conv_strides": 2,
+                "conv_l1": 1e-50,
+                "conv_l2": 1e-50,
+                "conv_activation": "linear",
+                "conv_use_bn": False,
+                "dropout_rate": 0.5,
+                "marker_adaptaptive_l1": False,
+                "marker_l1": 1e-50,
+                "marker_l2": 1e-50,
+                "group_l1": 1e-50,
+                "group_l2": 1e-50,
+                "use_rank_loss": False,
+            },
+            {
+                "train_means": True,
+                "weight": "none",
+                "target_options": "stdnorm",
+                "min_maf": 0.05,
+                "marker_preprocessor": "maf",
+                "feature_selector": "passthrough",
+                "conv_nlayers": 0,
+                "dropout_rate": 0.5,
+                "marker_adaptaptive_l1": False,
+                "marker_l1": 1e-50,
+                "marker_l2": 1e-50,
+                "group_l1": 1e-50,
+                "group_l2": 1e-50,
+                "use_rank_loss": False,
+            }
         ]
 
 
@@ -1325,7 +1505,7 @@ class MLPModel(TFBaseModel):
 
     use_weights: bool = True
 
-    def sample_params(self, trial: "optuna.Trial") -> Dict[str, BaseTypes]:
+    def sample_params(self, trial: "optuna.Trial") -> Dict[str, BaseTypes]:  # noqa
         params = self.sample_preprocessing_params(
             trial,
             target_options=["stdnorm", "quantile"],
@@ -1344,61 +1524,237 @@ class MLPModel(TFBaseModel):
             "marker_embed_nlayers", 1, 4
         )
 
+        assert isinstance(params["marker_embed_nlayers"], int)
+        for i in range(params["marker_embed_nlayers"]):
+            params[f"marker_embed{i}_activation"] = trial.suggest_categorical(
+                f"marker_embed{i}_activation",
+                ["linear", "relu"]
+            )
+
+            if params[f"marker_embed{i}_activation"] != "linear":
+                params[f"marker_embed{i}_res"] = trial.suggest_categorical(
+                    f"marker_embed{i}_res",
+                    [True, False]
+                )
+
+        params["marker_embed_adaptive_l1"] = trial.suggest_categorical(
+            "marker_embed_adaptive_l1",
+            [True, False]
+        )
+
+        assert isinstance(params["marker_embed_adaptive_l1"], bool)
+        if params["marker_embed_adaptive_l1"]:
+            params["marker_embed_adaptive_l1_rate"] = trial.suggest_float(
+                "marker_embed_adaptive_l1_rate",
+                1e-10,
+                50
+            )
+
+            params["marker_embed_adaptive_l2_rate"] = trial.suggest_float(
+                "marker_embed_adaptive_l2_rate",
+                1e-50,
+                50
+            )
+
+        params["marker_embed0_dropout_rate"] = trial.suggest_float(
+            "marker_embed0_dropout_rate",
+            0, 1
+        )
+
+        params["marker_embed0_l1"] = trial.suggest_float(
+            "marker_embed0_l1",
+            1e-50,
+            50,
+            log=True
+        )
+        params["marker_embed0_l2"] = trial.suggest_float(
+            "marker_embed0_l2",
+            1e-50,
+            50,
+            log=True
+        )
+
+        assert isinstance(params["marker_embed_nlayers"], int)
+        if params["marker_embed_nlayers"] > 1:
+            params["marker_embed1_l1"] = trial.suggest_float(
+                "marker_embed1_l1",
+                1e-50,
+                50,
+                log=True
+            )
+            params["marker_embed1_l2"] = trial.suggest_float(
+                "marker_embed0_l2",
+                1e-50,
+                50,
+                log=True
+            )
+
+            params["marker_embed1_dropout_rate"] = trial.suggest_float(
+                "marker_embed1_dropout_rate",
+                0, 1
+            )
+
         if len(self.grouping_columns) > 0:
             params["env_embed_nlayers"] = trial.suggest_int(
                 "env_embed_nlayers", 1, 4
             )
 
-            pass
+            assert isinstance(params["env_embed_nlayers"], int)
+            for i in range(params["env_embed_nlayers"]):
+                params[f"env_embed{i}_activation"] = trial.suggest_categorical(
+                    f"env_embed{i}_activation",
+                    ["linear", "relu"]
+                )
+                if params[f"env_embed{i}_activation"] != "linear":
+                    params[f"env_embed{i}_res"] = trial.suggest_categorical(
+                        f"env_embed{i}_res",
+                        [True, False]
+                    )
+
+            params["env_embed0_l2"] = trial.suggest_float(
+                "env_embed0_l2",
+                1e-50,
+                50,
+                log=True
+            )
+
+            params["env_embed0_dropout_rate"] = trial.suggest_float(
+                "env_embed0_dropout_rate",
+                0,
+                1
+            )
+
+            assert isinstance(params["env_embed_nlayers"], int)
+            if params["env_embed_nlayers"] > 1:
+                params["env_embed1_l2"] = trial.suggest_float(
+                    "env_embed1_l2",
+                    1e-50,
+                    50,
+                    log=True
+                )
+
+                params["env_embed1_dropout_rate"] = trial.suggest_float(
+                    "env_embed1_dropout_rate",
+                    0,
+                    1
+                )
+
+            params["combiner"] = trial.suggest_categorical(
+                "combiner",
+                ["add", "concat"]
+            )
 
         params["postembed_nlayers"] = trial.suggest_int(
             "postembed_nlayers", 0, 2
         )
 
+        assert isinstance(params["postembed_nlayers"], int)
+        for i in range(params["postembed_nlayers"]):
+            params[f"postembed{i}_activation"] = trial.suggest_categorical(
+                f"postembed{i}_activation",
+                ["linear", "relu"]
+            )
+            if params[f"postembed{i}_activation"] != "linear":
+                params[f"postembed{i}_res"] = trial.suggest_categorical(
+                    f"postembed{i}_res",
+                    [True, False]
+                )
+
+        assert isinstance(params["postembed_nlayers"], int)
         if params["postembed_nlayers"] > 0:
+            assert isinstance(params["embed_nunits"], int)
             params["postembed_nunits"] = trial.suggest_int(
                 "postembed_nunits",
                 5,
-                100,
+                params["embed_nunits"],
                 step=5
             )
 
-        params["dropout_rate"] = trial.suggest_float("dropout_rate", 0, 1)
+        params["postembed_dropout_rate"] = trial.suggest_float(
+            "postembed_dropout_rate",
+            0, 1
+        )
 
-        params["marker_l1"] = trial.suggest_float(
-            "marker_l1",
+        params["postembed_l1"] = trial.suggest_float(
+            "postembed_l1",
             1e-50,
             50,
             log=True
         )
-        params["marker_l2"] = trial.suggest_float(
-            "marker_l2",
+
+        params["postembed_l2"] = trial.suggest_float(
+            "postembed_l2",
             1e-50,
             50,
             log=True
         )
+
+        params["marker_embed_regularizer"] = trial.suggest_categorical(
+            "marker_embed_regularizer",
+            ["none", "semihard", "hard", "relief"]
+        )
+
+        if params["marker_embed_regularizer"] == "semihard":
+            params["marker_semihard_loss"] = trial.suggest_float(
+                "marker_semihard_loss_rate",
+                1e-20, 5, log=True
+            )
+        elif params["marker_embed_regularizer"] == "hard":
+            params["marker_hard_loss"] = trial.suggest_float(
+                "marker_hard_loss",
+                1e-20, 5, log=True
+            )
+        elif params["marker_embed_regularizer"] == "relief":
+            params["marker_relief_loss"] = trial.suggest_float(
+                "marker_relief_loss",
+                1e-20, 5, log=True
+            )
+
+        params["use_rank_loss"] = trial.suggest_categorical(
+            "use_rank_loss",
+            [True, False]
+        )
+        if params["use_rank_loss"]:
+            params["rank_loss"] = trial.suggest_float(
+                "rank_loss",
+                1e-20, 5, log=True
+            )
 
         if len(self.grouping_columns) > 0:
-            params["group_l1"] = trial.suggest_float(
-                "group_l1",
-                1e-50,
-                50,
-                log=True
+            params["env_embed_regularizer"] = trial.suggest_categorical(
+                "env_embed_regularizer",
+                ["none", "semihard", "hard"]
             )
-            params["group_l2"] = trial.suggest_float(
-                "group_l2",
-                1e-50,
-                50,
-                log=True
-            )
+            if params["env_embed_regularizer"] == "hard":
+                params["env_hard_loss"] = trial.suggest_float(
+                    "env_hard_loss",
+                    1e-20, 5, log=True
+                )
+            elif params["env_embed_regularizer"] == "semihard":
+                params["env_semihard_loss"] = trial.suggest_float(
+                    "env_semihard_loss_rate",
+                    1e-20, 5, log=True
+                )
 
         return params
 
     def model(self, params: Dict[str, Any]):
-        from selectml.tf.layers import AddChannel, Flatten1D, ConvLinkage
+        from selectml.tf.layers import (
+            LocalLasso,
+            AddChannel,
+            Flatten1D,
+            ParallelResidualUnit,
+            ResidualUnit
+        )
         from selectml.tf.models import SSModel
-        from tensorflow.keras.layers import Dropout, Dense
-        from tensorflow.keras.regularizers import L1L2
+        from selectml.tf.regularizers import AdaptiveL1L2Regularizer
+        from tensorflow.keras.layers import (
+            Dropout,
+            Dense,
+            BatchNormalization,
+            ReLU
+        )
+        from tensorflow.keras.regularizers import L2, L1L2
         from tensorflow.keras.models import Sequential
 
         (
@@ -1407,42 +1763,153 @@ class MLPModel(TFBaseModel):
             marker_trans
         ) = self.sample_preprocessing_model(params)
 
-        marker_model = Sequential([
-            AddChannel(),
-            ConvLinkage(
-                nlayers=params["conv_nlayers"],
-                filters=params["conv_filters"],
-                strides=params["conv_strides"],
-                kernel_size=params["conv_kernel_size"],
-                activation=params["conv_activation"],
-                activation_first=params["conv_activation"],
-                activation_last=params["conv_activation"],
-                kernel_regularizer=L1L2(
-                    params["conv_l1"],
-                    params["conv_l2"],
-                ),
-                use_bn=params["conv_use_bn"]
-            ),
-            Flatten1D(),
-            Dropout(params["dropout_rate"]),
-            Dense(1, use_bias=True, kernel_regularizer=L1L2(
-                params["marker_l1"],
-                params["marker_l2"])
-            ),
-        ])
+        marker_model = []
+
+        if params["marker_embed_adaptive_l1"]:
+            reg = AdaptiveL1L2Regularizer(
+                l1=params["marker_embed_adaptive_l1_rate"],
+                l2=params["marker_embed_adaptive_l2_rate"],
+                adapt=True,
+            )
+            marker_model.extend([
+                AddChannel(),
+                LocalLasso(kernel_regularizer=reg),
+                Flatten1D()
+            ])
+
+        for i in range(params["marker_embed_nlayers"]):
+            j = 0 if (i == 0) else 1
+            marker_model.append(
+                Dropout(params[f"marker_embed{j}_dropout_rate"])
+            )
+
+            reg = L1L2(
+                params[f"marker_embed{j}_l1"],
+                params[f"marker_embed{j}_l2"],
+            )
+
+            if params.get(f"marker_embed{i}_res", False):
+                type_ = ParallelResidualUnit if (j == 0) else ResidualUnit
+                marker_model.append(type_(
+                    params["embed_nunits"],
+                    params[f"marker_embed{j}_dropout_rate"],
+                    activation=params[f"marker_embed{i}_activation"],
+                    use_bias=True,
+                    nonlinear_kernel_regularizer=reg,
+                    gain_kernel_regularizer=reg,
+                    linear_kernel_regularizer=reg,
+                ))
+            else:
+                marker_model.append(Dense(
+                    params["embed_nunits"],
+                    activation="linear",
+                    kernel_regularizer=reg,
+                    use_bias=True
+                ))
+                marker_model.append(BatchNormalization())
+
+                # The current trend seems to be to do activation after
+                # batch/layer norm. This might change in future.
+                if params[f"marker_embed{i}_activation"] == "relu":
+                    marker_model.append(ReLU())
 
         if len(self.grouping_columns) > 0:
-            group_model = Dense(1, use_bias=True, kernel_regularizer=L1L2(
-                params["group_l1"],
-                params["group_l2"])
-            )
+            env_model: Optional[List] = []
+            assert env_model is not None
+
+            for i in range(params["env_embed_nlayers"]):
+                j = 0 if (i == 0) else 1
+                env_model.append(
+                    Dropout(params[f"env_embed{j}_dropout_rate"])
+                )
+
+                reg = L2(
+                    params[f"env_embed{j}_l2"],
+                )
+
+                if params.get(f"env_embed{i}_res", False):
+                    type_ = ParallelResidualUnit if (j == 0) else ResidualUnit
+                    env_model.append(type_(
+                        params["embed_nunits"],
+                        params[f"env_embed{j}_dropout_rate"],
+                        activation=params[f"env_embed{i}_activation"],
+                        use_bias=True,
+                        nonlinear_kernel_regularizer=reg,
+                        gain_kernel_regularizer=reg,
+                        linear_kernel_regularizer=reg,
+                    ))
+                else:
+                    env_model.append(Dense(
+                        params["embed_nunits"],
+                        activation="linear",
+                        kernel_regularizer=reg,
+                        use_bias=True
+                    ))
+                    env_model.append(BatchNormalization())
+                    if params[f"env_embed{i}_activation"] == "relu":
+                        env_model.append(ReLU())
         else:
-            group_model = None
+            env_model = None
+
+        postembed_model = []
+
+        reg = L1L2(
+            params["postembed_l1"],
+            params["postembed_l2"],
+        )
+
+        for i in range(params["postembed_nlayers"]):
+            j = 0 if (i == 0) else 1
+            postembed_model.append(
+                Dropout(params["postembed_dropout_rate"])
+            )
+
+            if params.get(f"postembed{i}_res", False):
+                type_ = ParallelResidualUnit if (j == 0) else ResidualUnit
+                postembed_model.append(type_(
+                    params["postembed_nunits"],
+                    params["postembed_dropout_rate"],
+                    activation=params[f"postembed{i}_activation"],
+                    use_bias=True,
+                    nonlinear_kernel_regularizer=reg,
+                    gain_kernel_regularizer=reg,
+                    linear_kernel_regularizer=reg,
+                ))
+            else:
+                postembed_model.append(Dense(
+                    params["postembed_nunits"],
+                    activation="linear",
+                    kernel_regularizer=reg,
+                    use_bias=True
+                ))
+                postembed_model.append(BatchNormalization())
+
+                # The current trend seems to be to do activation after
+                # batch/layer norm. This might change in future.
+                if params[f"postembed{i}_activation"] == "relu":
+                    postembed_model.append(ReLU())
+
+        postembed_model.extend([
+            Dropout(params["postembed_dropout_rate"]),
+            Dense(
+                1,
+                activation="linear",
+                kernel_regularizer=reg,
+                use_bias=True
+            )
+        ])
 
         model = SSModel(
-            marker_embedder=marker_model,
-            env_embedder=group_model,
-            combiner="add",
+            marker_embedder=Sequential(marker_model),
+            env_embedder=None if env_model is None else Sequential(env_model),
+            post_embedder=Sequential(postembed_model),
+            combiner=params.get("combiner", "add"),
+            marker_semihard_loss=params.get("marker_semihard_loss", None),
+            marker_hard_loss=params.get("marker_hard_loss", None),
+            marker_relief_loss=params.get("marker_relief_loss", None),
+            rank_loss=params.get("rank_loss", None),
+            env_semihard_loss=params.get("env_semihard_loss", None),
+            env_hard_loss=params.get("env_hard_loss", None),
         )
 
         return TFWrapper(
@@ -1454,4 +1921,699 @@ class MLPModel(TFBaseModel):
 
     def starting_points(self) -> List[Dict[str, BaseTypes]]:
         return [
+            {
+                "train_means": True,
+                "weight": "none",
+                "target_options": "stdnorm",
+                "min_maf": 0.05,
+                "marker_preprocessor": "maf",
+                "feature_selector": "passthrough",
+                "embed_nunits": 10,
+                "marker_embed_nlayers": 1,
+                "marker_embed0_activation": "linear",
+                "marker_embed_adaptive_l1": False,
+                "marker_embed0_dropout_rate": 0.5,
+                "marker_embed0_l1": 1e-50,
+                "marker_embed0_l2": 1e-50,
+                "env_embed_nlayers": 1,
+                "env_embed0_activation": "linear",
+                "env_embed0_dropout_rate": 0.0,
+                "env_embed0_l2": 1e-50,
+                "combiner": "add",
+                "postembed_nlayers": 0,
+                "postembed_dropout_rate": 0.2,
+                "postembed_l1": 1e-50,
+                "postembed_l2": 1e-50,
+                "use_rank_loss": False,
+                "marker_embed_regularizer": "none",
+                "env_embed_regularizer": "none",
+            },
+            {
+                "train_means": True,
+                "weight": "none",
+                "target_options": "stdnorm",
+                "min_maf": 0.05,
+                "marker_preprocessor": "maf",
+                "feature_selector": "passthrough",
+                "embed_nunits": 10,
+                "marker_embed_nlayers": 1,
+                "marker_embed0_activation": "linear",
+                "marker_embed_adaptive_l1": False,
+                "marker_embed0_dropout_rate": 0.5,
+                "marker_embed0_l1": 1e-50,
+                "marker_embed0_l2": 1e-50,
+                "env_embed_nlayers": 1,
+                "env_embed0_activation": "linear",
+                "env_embed0_dropout_rate": 0.0,
+                "env_embed0_l2": 1e-50,
+                "combiner": "add",
+                "postembed_nlayers": 1,
+                "postembed_nunits": 10,
+                "postembed_dropout_rate": 0.2,
+                "postembed_l1": 1e-50,
+                "postembed_l2": 1e-50,
+                "use_rank_loss": False,
+                "marker_embed_regularizer": "none",
+                "env_embed_regularizer": "none",
+            },
+            {
+                "train_means": True,
+                "weight": "none",
+                "target_options": "stdnorm",
+                "min_maf": 0.05,
+                "marker_preprocessor": "maf",
+                "feature_selector": "passthrough",
+                "embed_nunits": 10,
+                "marker_embed_nlayers": 1,
+                "marker_embed0_activation": "linear",
+                "marker_embed_adaptive_l1": True,
+                "marker_embed_adaptive_l1_rate": 1e-3,
+                "marker_embed_adaptive_l2_rate": 1e-9,
+                "marker_embed0_dropout_rate": 0.5,
+                "marker_embed0_l1": 1e-50,
+                "marker_embed0_l2": 1e-50,
+                "env_embed_nlayers": 1,
+                "env_embed0_activation": "linear",
+                "env_embed0_dropout_rate": 0.0,
+                "env_embed0_l2": 1e-50,
+                "combiner": "add",
+                "postembed_nlayers": 0,
+                "postembed_dropout_rate": 0.2,
+                "postembed_l1": 1e-50,
+                "postembed_l2": 1e-50,
+                "use_rank_loss": False,
+                "marker_embed_regularizer": "semihard",
+                "marker_semihard_loss": 0.5,
+                "env_embed_regularizer": "none",
+            },
+        ]
+
+
+class ConvMLPModel(TFBaseModel):
+
+    use_weights: bool = True
+
+    def sample_params(self, trial: "optuna.Trial") -> Dict[str, BaseTypes]:  # noqa
+        params = self.sample_preprocessing_params(
+            trial,
+            target_options=["stdnorm", "quantile"],
+            marker_options=["maf"],
+            feature_selection_options=["passthrough", "relief"],
+        )
+
+        nmarkers = len(self.marker_columns)
+        if "feature_selection_nfeatures" in params:
+            assert isinstance(params["feature_selection_nfeatures"], int)
+            nmarkers = params["feature_selection_nfeatures"]
+
+        if nmarkers < 30:
+            max_conv_levels = 0
+        elif nmarkers < 100:
+            max_conv_levels = 1
+        elif nmarkers < 200:
+            max_conv_levels = 2
+        else:
+            max_conv_levels = 3
+
+        params["conv_nlayers"] = trial.suggest_int(
+            "conv_nlayers",
+            0,
+            max_conv_levels
+        )
+
+        assert isinstance(params["conv_nlayers"], int)
+        if params["conv_nlayers"] > 0:
+            params["conv_filters"] = trial.suggest_int("conv_filters", 1, 4)
+            params["conv_kernel_size"] = trial.suggest_int(
+                "conv_kernel_size",
+                2,
+                5
+            )
+
+            assert isinstance(params["conv_kernel_size"], int)
+            max_stride = params["conv_kernel_size"]
+            while (
+                (nmarkers / (max_stride ** params["conv_nlayers"]))
+                < (2 * params["conv_kernel_size"])
+            ):
+                # Avoid zero-division error in whie
+                if max_stride <= 1:
+                    max_stride = 1
+                    break
+                max_stride -= 1
+
+            params["conv_strides"] = trial.suggest_int(
+                "conv_strides",
+                2,
+                max_stride
+            )
+            params["conv_l1"] = trial.suggest_float(
+                "conv_l1", 1e-50, 50, log=True)
+            params["conv_l2"] = trial.suggest_float(
+                "conv_l2", 1e-50, 50, log=True)
+            params["conv_activation"] = trial.suggest_categorical(
+                "conv_activation",
+                ["linear", "relu"]
+            )
+            params["conv_use_bn"] = trial.suggest_categorical(
+                "conv_use_bn",
+                [True, False]
+            )
+
+        params["embed_nunits"] = trial.suggest_int(
+            "embed_nunits",
+            5,
+            100,
+            step=5
+        )
+
+        params["marker_embed_nlayers"] = trial.suggest_int(
+            "marker_embed_nlayers", 1, 4
+        )
+
+        assert isinstance(params["marker_embed_nlayers"], int)
+        for i in range(params["marker_embed_nlayers"]):
+            params[f"marker_embed{i}_activation"] = trial.suggest_categorical(
+                f"marker_embed{i}_activation",
+                ["linear", "relu"]
+            )
+
+            if params[f"marker_embed{i}_activation"] != "linear":
+                params[f"marker_embed{i}_res"] = trial.suggest_categorical(
+                    f"marker_embed{i}_res",
+                    [True, False]
+                )
+
+        params["marker_embed_adaptive_l1"] = trial.suggest_categorical(
+            "marker_embed_adaptive_l1",
+            [True, False]
+        )
+
+        params["marker_embed_adaptive_l1_rate"] = trial.suggest_float(
+            "marker_embed_adaptive_l1_rate",
+            1e-10,
+            50
+        )
+
+        params["marker_embed_adaptive_l2_rate"] = trial.suggest_float(
+            "marker_embed_adaptive_l2_rate",
+            1e-50,
+            50
+        )
+
+        params["marker_embed0_dropout_rate"] = trial.suggest_float(
+            "marker_embed0_dropout_rate",
+            0, 1
+        )
+
+        params["marker_embed0_l1"] = trial.suggest_float(
+            "marker_embed0_l1",
+            1e-50,
+            50,
+            log=True
+        )
+        params["marker_embed0_l2"] = trial.suggest_float(
+            "marker_embed0_l2",
+            1e-50,
+            50,
+            log=True
+        )
+
+        assert isinstance(params["marker_embed_nlayers"], int)
+        if params["marker_embed_nlayers"] > 1:
+            params["marker_embed1_l1"] = trial.suggest_float(
+                "marker_embed1_l1",
+                1e-50,
+                50,
+                log=True
+            )
+            params["marker_embed1_l2"] = trial.suggest_float(
+                "marker_embed0_l2",
+                1e-50,
+                50,
+                log=True
+            )
+
+            params["marker_embed1_dropout_rate"] = trial.suggest_float(
+                "marker_embed1_dropout_rate",
+                0, 1
+            )
+
+        if len(self.grouping_columns) > 0:
+            params["env_embed_nlayers"] = trial.suggest_int(
+                "env_embed_nlayers", 1, 4
+            )
+
+            assert isinstance(params["env_embed_nlayers"], int)
+            for i in range(params["env_embed_nlayers"]):
+                params[f"env_embed{i}_activation"] = trial.suggest_categorical(
+                    f"env_embed{i}_activation",
+                    ["linear", "relu"]
+                )
+                if params[f"env_embed{i}_activation"] != "linear":
+                    params[f"env_embed{i}_res"] = trial.suggest_categorical(
+                        f"env_embed{i}_res",
+                        [True, False]
+                    )
+
+            params["env_embed0_l2"] = trial.suggest_float(
+                "env_embed0_l2",
+                1e-50,
+                50,
+                log=True
+            )
+
+            params["env_embed0_dropout_rate"] = trial.suggest_float(
+                "env_embed1_dropout_rate",
+                0,
+                1
+            )
+
+            assert isinstance(params["env_embed_nlayers"], int)
+            if params["env_embed_nlayers"] > 1:
+                params["env_embed1_l2"] = trial.suggest_float(
+                    "env_embed1_l2",
+                    1e-50,
+                    50,
+                    log=True
+                )
+
+                params["env_embed1_dropout_rate"] = trial.suggest_float(
+                    "env_embed1_dropout_rate",
+                    0,
+                    1
+                )
+
+            params["combiner"] = trial.suggest_categorical(
+                "combiner",
+                ["add", "concat"]
+            )
+
+        params["postembed_nlayers"] = trial.suggest_int(
+            "postembed_nlayers", 0, 2
+        )
+
+        assert isinstance(params["postembed_nlayers"], int)
+        for i in range(params["postembed_nlayers"]):
+            params[f"postembed{i}_activation"] = trial.suggest_categorical(
+                f"postembed{i}_activation",
+                ["linear", "relu"]
+            )
+            if params[f"postembed{i}_activation"] != "linear":
+                params[f"postembed{i}_res"] = trial.suggest_categorical(
+                    f"postembed{i}_res",
+                    [True, False]
+                )
+
+        assert isinstance(params["postembed_nlayers"], int)
+        if params["postembed_nlayers"] > 0:
+            assert isinstance(params["embed_nunits"], int)
+            params["postembed_nunits"] = trial.suggest_int(
+                "postembed_nunits",
+                5,
+                params["embed_nunits"],
+                step=5
+            )
+
+        params["postembed_dropout_rate"] = trial.suggest_float(
+            "postembed_dropout_rate",
+            0, 1
+        )
+
+        params["postembed_l1"] = trial.suggest_float(
+            "postembed_l1",
+            1e-50,
+            50,
+            log=True
+        )
+
+        params["postembed_l2"] = trial.suggest_float(
+            "postembed_l2",
+            1e-50,
+            50,
+            log=True
+        )
+
+        params["marker_embed_regularizer"] = trial.suggest_categorical(
+            "marker_embed_regularizer",
+            ["none", "semihard", "hard", "relief"]
+        )
+
+        if params["marker_embed_regularizer"] == "semihard":
+            params["marker_semihard_loss"] = trial.suggest_float(
+                "marker_semihard_loss_rate",
+                1e-20, 5, log=True
+            )
+        elif params["marker_embed_regularizer"] == "hard":
+            params["marker_hard_loss"] = trial.suggest_float(
+                "marker_hard_loss",
+                1e-20, 5, log=True
+            )
+        elif params["marker_embed_regularizer"] == "relief":
+            params["marker_relief_loss"] = trial.suggest_float(
+                "marker_relief_loss",
+                1e-20, 5, log=True
+            )
+
+        params["use_rank_loss"] = trial.suggest_categorical(
+            "use_rank_loss",
+            [True, False]
+        )
+        if params["use_rank_loss"]:
+            params["rank_loss"] = trial.suggest_float(
+                "rank_loss",
+                1e-20, 5, log=True
+            )
+
+        if len(self.grouping_columns) > 0:
+            params["env_embed_regularizer"] = trial.suggest_categorical(
+                "env_embed_regularizer",
+                ["none", "semihard", "hard"]
+            )
+            if params["env_embed_regularizer"] == "hard":
+                params["env_hard_loss"] = trial.suggest_float(
+                    "env_hard_loss",
+                    1e-20, 5, log=True
+                )
+            elif params["env_embed_regularizer"] == "semihard":
+                params["env_semihard_loss"] = trial.suggest_float(
+                    "env_semihard_loss_rate",
+                    1e-20, 5, log=True
+                )
+
+        return params
+
+    def model(self, params: Dict[str, Any]):  # noqa
+        from selectml.tf.layers import (
+            LocalLasso,
+            AddChannel,
+            Flatten1D,
+            ParallelResidualUnit,
+            ResidualUnit,
+            ConvLinkage
+        )
+        from selectml.tf.models import SSModel
+        from selectml.tf.regularizers import AdaptiveL1L2Regularizer
+        from tensorflow.keras.layers import (
+            Dropout,
+            Dense,
+            BatchNormalization,
+            ReLU
+        )
+        from tensorflow.keras.regularizers import L2, L1L2
+        from tensorflow.keras.models import Sequential
+
+        (
+            target_trans,
+            grouping_trans,
+            marker_trans
+        ) = self.sample_preprocessing_model(params)
+
+        marker_model = []
+
+        if params["conv_nlayers"] > 0:
+            marker_model.extend([
+                AddChannel(),
+                ConvLinkage(
+                    nlayers=params["conv_nlayers"],
+                    filters=params["conv_filters"],
+                    strides=params["conv_strides"],
+                    kernel_size=params["conv_kernel_size"],
+                    activation=params["conv_activation"],
+                    activation_first=params["conv_activation"],
+                    activation_last=params["conv_activation"],
+                    kernel_regularizer=L1L2(
+                        params["conv_l1"],
+                        params["conv_l2"],
+                    ),
+                    use_bn=params["conv_use_bn"]
+                ),
+                Flatten1D(),
+            ])
+
+        if params["marker_embed_adaptive_l1"]:
+            reg = AdaptiveL1L2Regularizer(
+                l1=params["marker_embed_adaptive_l1_rate"],
+                l2=params["marker_embed_adaptive_l2_rate"],
+                adapt=True,
+            )
+            marker_model.extend([
+                AddChannel(),
+                LocalLasso(kernel_regularizer=reg),
+                Flatten1D()
+            ])
+
+        for i in range(params["marker_embed_nlayers"]):
+            j = 0 if (i == 0) else 1
+            marker_model.append(
+                Dropout(params[f"marker_embed{j}_dropout_rate"])
+            )
+
+            reg = L1L2(
+                params[f"marker_embed{j}_l1"],
+                params[f"marker_embed{j}_l2"],
+            )
+
+            if params.get(f"marker_embed{i}_res", False):
+                type_ = ParallelResidualUnit if (j == 0) else ResidualUnit
+                marker_model.append(type_(
+                    params["embed_nunits"],
+                    params[f"marker_embed{j}_dropout_rate"],
+                    activation=params[f"marker_embed{i}_activation"],
+                    use_bias=True,
+                    nonlinear_kernel_regularizer=reg,
+                    gain_kernel_regularizer=reg,
+                    linear_kernel_regularizer=reg,
+                ))
+            else:
+                marker_model.append(Dense(
+                    params["embed_nunits"],
+                    activation="linear",
+                    kernel_regularizer=reg,
+                    use_bias=True
+                ))
+                marker_model.append(BatchNormalization())
+
+                # The current trend seems to be to do activation after
+                # batch/layer norm. This might change in future.
+                if params[f"marker_embed{i}_activation"] == "relu":
+                    marker_model.append(ReLU())
+
+        if len(self.grouping_columns) > 0:
+            env_model: Optional[List] = []
+            assert env_model is not None
+
+            for i in range(params["env_embed_nlayers"]):
+                j = 0 if (i == 0) else 1
+                env_model.append(
+                    Dropout(params[f"env_embed{j}_dropout_rate"])
+                )
+
+                reg = L2(
+                    params[f"env_embed{j}_l2"],
+                )
+
+                if params.get(f"env_embed{i}_res", False):
+                    type_ = ParallelResidualUnit if (j == 0) else ResidualUnit
+                    env_model.append(type_(
+                        params["embed_nunits"],
+                        params[f"env_embed{j}_dropout_rate"],
+                        activation=params[f"env_embed{i}_activation"],
+                        use_bias=True,
+                        nonlinear_kernel_regularizer=reg,
+                        gain_kernel_regularizer=reg,
+                        linear_kernel_regularizer=reg,
+                    ))
+                else:
+                    env_model.append(Dense(
+                        params["embed_nunits"],
+                        activation="linear",
+                        kernel_regularizer=reg,
+                        use_bias=True
+                    ))
+                    env_model.append(BatchNormalization())
+                    if params[f"env_embed{i}_activation"] == "relu":
+                        env_model.append(ReLU())
+        else:
+            env_model = None
+
+        postembed_model = []
+
+        reg = L1L2(
+            params["postembed_l1"],
+            params["postembed_l2"],
+        )
+
+        for i in range(params["postembed_nlayers"]):
+            j = 0 if (i == 0) else 1
+            postembed_model.append(
+                Dropout(params["postembed_dropout_rate"])
+            )
+
+            if params.get(f"postembed{i}_res", False):
+                type_ = ParallelResidualUnit if (j == 0) else ResidualUnit
+                postembed_model.append(type_(
+                    params["postembed_nunits"],
+                    params["postembed_dropout_rate"],
+                    activation=params[f"postembed{i}_activation"],
+                    use_bias=True,
+                    nonlinear_kernel_regularizer=reg,
+                    gain_kernel_regularizer=reg,
+                    linear_kernel_regularizer=reg,
+                ))
+            else:
+                postembed_model.append(Dense(
+                    params["postembed_nunits"],
+                    activation="linear",
+                    kernel_regularizer=reg,
+                    use_bias=True
+                ))
+                postembed_model.append(BatchNormalization())
+
+                # The current trend seems to be to do activation after
+                # batch/layer norm. This might change in future.
+                if params[f"postembed{i}_activation"] == "relu":
+                    postembed_model.append(ReLU())
+
+        postembed_model.extend([
+            Dropout(params["postembed_dropout_rate"]),
+            Dense(
+                1,
+                activation="linear",
+                kernel_regularizer=reg,
+                use_bias=True
+            )
+        ])
+
+        model = SSModel(
+            marker_embedder=Sequential(marker_model),
+            env_embedder=None if env_model is None else Sequential(env_model),
+            post_embedder=Sequential(postembed_model),
+            combiner=params.get("combiner", "add"),
+            marker_semihard_loss=params.get("marker_semihard_loss", None),
+            marker_hard_loss=params.get("marker_hard_loss", None),
+            marker_relief_loss=params.get("marker_relief_loss", None),
+            rank_loss=params.get("rank_loss", None),
+            env_semihard_loss=params.get("env_semihard_loss", None),
+            env_hard_loss=params.get("env_hard_loss", None),
+        )
+
+        return TFWrapper(
+            model=model,
+            target_trans=target_trans,
+            group_trans=grouping_trans,
+            marker_trans=marker_trans,
+        )
+
+    def starting_points(self) -> List[Dict[str, BaseTypes]]:
+        return [
+            {
+                "train_means": True,
+                "weight": "none",
+                "target_options": "stdnorm",
+                "min_maf": 0.05,
+                "marker_preprocessor": "maf",
+                "feature_selector": "passthrough",
+                "conv_nlayers": 2,
+                "conv_filters": 1,
+                "conv_kernel_size": 3,
+                "conv_strides": 2,
+                "conv_l1": 1e-50,
+                "conv_l2": 1e-50,
+                "conv_activation": "linear",
+                "conv_use_bn": False,
+                "embed_nunits": 10,
+                "marker_embed_nlayers": 1,
+                "marker_embed0_activation": "linear",
+                "marker_embed_adaptive_l1": False,
+                "marker_embed0_dropout_rate": 0.5,
+                "marker_embed0_l1": 1e-50,
+                "marker_embed0_l2": 1e-50,
+                "env_embed_nlayers": 1,
+                "env_embed0_activation": "linear",
+                "env_embed0_dropout_rate": 0.0,
+                "env_embed0_l2": 1e-50,
+                "combiner": "add",
+                "postembed_nlayers": 0,
+                "postembed_dropout_rate": 0.2,
+                "postembed_l1": 1e-50,
+                "postembed_l2": 1e-50,
+                "use_rank_loss": False,
+                "marker_embed_regularizer": "none",
+                "env_embed_regularizer": "none",
+            },
+            {
+                "train_means": True,
+                "weight": "none",
+                "target_options": "stdnorm",
+                "min_maf": 0.05,
+                "marker_preprocessor": "maf",
+                "feature_selector": "passthrough",
+                "conv_nlayers": 2,
+                "conv_filters": 1,
+                "conv_kernel_size": 3,
+                "conv_strides": 2,
+                "conv_l1": 1e-50,
+                "conv_l2": 1e-50,
+                "conv_activation": "linear",
+                "conv_use_bn": False,
+                "embed_nunits": 10,
+                "marker_embed_nlayers": 1,
+                "marker_embed0_activation": "linear",
+                "marker_embed_adaptive_l1": False,
+                "marker_embed0_dropout_rate": 0.5,
+                "marker_embed0_l1": 1e-50,
+                "marker_embed0_l2": 1e-50,
+                "env_embed_nlayers": 1,
+                "env_embed0_activation": "linear",
+                "env_embed0_dropout_rate": 0.0,
+                "env_embed0_l2": 1e-50,
+                "combiner": "add",
+                "postembed_nlayers": 1,
+                "postembed_nunits": 10,
+                "postembed_dropout_rate": 0.2,
+                "postembed_l1": 1e-50,
+                "postembed_l2": 1e-50,
+                "use_rank_loss": False,
+                "marker_embed_regularizer": "none",
+                "env_embed_regularizer": "none",
+            },
+            {
+                "train_means": True,
+                "weight": "none",
+                "target_options": "stdnorm",
+                "min_maf": 0.05,
+                "marker_preprocessor": "maf",
+                "feature_selector": "passthrough",
+                "conv_nlayers": 2,
+                "conv_filters": 1,
+                "conv_kernel_size": 3,
+                "conv_strides": 2,
+                "conv_l1": 1e-50,
+                "conv_l2": 1e-50,
+                "conv_activation": "linear",
+                "conv_use_bn": False,
+                "embed_nunits": 10,
+                "marker_embed_nlayers": 1,
+                "marker_embed0_activation": "linear",
+                "marker_embed_adaptive_l1": True,
+                "marker_embed_adaptive_l1_rate": 1e-3,
+                "marker_embed_adaptive_l2_rate": 1e-9,
+                "marker_embed0_dropout_rate": 0.5,
+                "marker_embed0_l1": 1e-50,
+                "marker_embed0_l2": 1e-50,
+                "env_embed_nlayers": 1,
+                "env_embed0_activation": "linear",
+                "env_embed0_dropout_rate": 0.0,
+                "env_embed0_l2": 1e-50,
+                "combiner": "add",
+                "postembed_nlayers": 0,
+                "postembed_dropout_rate": 0.2,
+                "postembed_l1": 1e-50,
+                "postembed_l2": 1e-50,
+                "use_rank_loss": False,
+                "marker_embed_regularizer": "semihard",
+                "marker_semihard_loss": 0.5,
+                "env_embed_regularizer": "none",
+            },
         ]

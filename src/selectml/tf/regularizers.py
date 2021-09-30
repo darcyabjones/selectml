@@ -65,5 +65,6 @@ class AdaptiveL1L2Regularizer(tf.keras.regularizers.Regularizer):
         return {
             'l1': float(self.l1),
             'l2': float(self.l2),
-            "weights": [float(f) for f in self.weights]
+            "weights": [float(f) for f in self.weights],
+            "adapt": self.adapt
         }

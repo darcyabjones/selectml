@@ -92,14 +92,8 @@ class SSModel(tf.keras.Model):
                 name="env_hard_triplet_loss"
             )
 
-        if rank_loss is not None:
-            self.rank_out = tf.keras.layers.Dense(1)
-            self.rank_loss = RankLoss(name="rank")
-            self.rank_loss_tracker = tf.metrics.Mean(name="rank_loss")
-        else:
-            self.rank_out = None
-            self.rank_loss = None
-            self.rank_loss_tracker = None
+        self.rank_loss = RankLoss(name="rank")
+        self.rank_loss_tracker = tf.metrics.Mean(name="rank_loss")
 
         self.combiner = combiner
         if combiner == "add":
@@ -464,9 +458,6 @@ class SSModel(tf.keras.Model):
         else:
             out = embed
 
-        if self.rank_out is not None:
-            rank_out = self.rank_out(embed)
-        else:
-            rank_out = None
+        rank_out = out
 
         return marker_embed, env_embed, out, rank_out

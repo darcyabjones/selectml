@@ -848,9 +848,9 @@ class SKModel(OptimiseModel):
             params["feature_selection_nfeatures"] = (
                 trial.suggest_int(
                     "feature_selection_nfeatures",
-                    100,
-                    nmarkers,
-                    step=100
+                    min([100, round(nmarkers / 2)]),
+                    nmarkers - 1,
+                    step=min([100, round(nmarkers / 4)])
                 )
             )
 
@@ -858,9 +858,9 @@ class SKModel(OptimiseModel):
             params["feature_selection_nfeatures"] = (
                 trial.suggest_int(
                     "feature_selection_nfeatures",
-                    100,
-                    nmarkers,
-                    step=100,
+                    min([100, round(nmarkers / 2)]),
+                    nmarkers - 1,
+                    step=min([100, round(nmarkers / 4)]),
                 )
             )
 
@@ -1348,7 +1348,7 @@ class TFBaseModel(OptimiseModel):
         X: "npt.ArrayLike"
     ) -> "Tuple[np.ndarray, Optional[np.ndarray]]":
         if len(self.grouping_columns) == 0:
-            return None, np.array(X)
+            return np.array(X), None
 
         grouping_columns = slice(0, len(self.grouping_columns))
         marker_columns = slice(len(self.grouping_columns), None)
@@ -1477,8 +1477,8 @@ class TFBaseModel(OptimiseModel):
                 trial.suggest_int(
                     "feature_selection_nfeatures",
                     min([100, round(nmarkers / 2)]),
-                    nmarkers,
-                    step=100
+                    nmarkers - 1,
+                    step=min([100, round(nmarkers / 4)])
                 )
             )
 
@@ -1487,8 +1487,8 @@ class TFBaseModel(OptimiseModel):
                 trial.suggest_int(
                     "feature_selection_nfeatures",
                     min([100, round(nmarkers / 2)]),
-                    nmarkers,
-                    step=100,
+                    nmarkers - 1,
+                    step=min([100, round(nmarkers / 4)]),
                 )
             )
 
@@ -1595,7 +1595,7 @@ class TFBaseModel(OptimiseModel):
         from sklearn.pipeline import Pipeline
 
         from selectml.sk.compose import Aggregated
-        from sklearn.preprocessing import OneHotEncoder
+        from sklearn.preprocessing import StandardScaler
 
         from ..feature_selection import MAFSelector
 
@@ -1623,11 +1623,6 @@ class TFBaseModel(OptimiseModel):
             xaggregator="first"
         )
 
-        grouping_trans = OneHotEncoder(
-            categories="auto",
-            drop="if_binary",
-            handle_unknown="error",
-            sparse=False
-        )
+        grouping_trans = StandardScaler()
 
         return target, grouping_trans, marker_trans
