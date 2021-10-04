@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     import optuna
 
 from typing import Sequence, Union, Optional, Any
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Mapping, Dict
 from typing import Iterator
 
 
@@ -425,8 +425,8 @@ class OptimiseModel(object):
     def sample_params(self, trial: "optuna.Trial"):
         raise NotImplementedError()
 
-    def best_model(self, study: "optuna.Study", **kwargs):
-        params = study.best_params
+    def train_from_params(self, params: Mapping[str, BaseTypes], **kwargs):
+        params_ = dict(params)
 
         data = pd.merge(
             self.experiment,
@@ -446,7 +446,7 @@ class OptimiseModel(object):
             .values
         )
 
-        if params["train_means"]:
+        if params_["train_means"]:
             X = (
                 data
                 .groupby("_indiv_grouping_")
@@ -474,8 +474,8 @@ class OptimiseModel(object):
             indiv = data.loc[:, "_indiv_"]
             grouping = data.loc[:, "_indiv_grouping_"].values
 
-        params["nsamples"] = len(np.unique(indiv))
-        weight_fn = WEIGHT_FNS[params.get("weight", "none")]
+        params_["nsamples"] = len(np.unique(indiv))
+        weight_fn = WEIGHT_FNS[params_.get("weight", "none")]
 
         if weight_fn is None:
             weights = None
@@ -487,14 +487,14 @@ class OptimiseModel(object):
                  .values),
                 data.loc[:, self.response_columns].values,
                 data.loc[:, "_indiv_grouping_"].values,
-                params["train_means"]
+                params_["train_means"]
             )
 
         if isinstance(weights, pd.Series):
             weights = weights.values
 
         model = self.fit(
-            params,
+            params_,
             X.values,
             y.values,
             indiv.values,
@@ -503,6 +503,10 @@ class OptimiseModel(object):
             **kwargs
         )
         return model
+
+    def best_model(self, study: "optuna.Study", **kwargs):
+        params = study.best_params
+        return self.train_from_params(params)
 
     def model(self, params: Dict[str, Any]):
         raise NotImplementedError()

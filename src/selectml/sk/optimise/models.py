@@ -15,8 +15,8 @@ from collections import namedtuple
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import numpy.typing as npt
+    import optuna
 
-import optuna
 import numpy as np
 from .base import SKModel, TFBaseModel
 
@@ -316,7 +316,7 @@ class RFModel(SKModel):
         return Pipeline([
             ("preprocessor", preprocessor),
             ("model", RandomForestRegressor(
-                criterion="absolute_error",
+                criterion="mae",
                 max_depth=params["max_depth"],
                 n_estimators=params["n_estimators"],
                 max_features=params["max_features"],
@@ -414,7 +414,7 @@ class ExtraTreesModel(SKModel):
         return Pipeline([
             ("preprocessor", preprocessor),
             ("model", ExtraTreesRegressor(
-                criterion="absolute_error",
+                criterion="mae",
                 max_depth=params["max_depth"],
                 n_estimators=params["n_estimators"],
                 max_features=params["max_features"],
