@@ -429,3 +429,439 @@ class PercentileRankTransformer(TransformerMixin, BaseEstimator):
         if X_transformed:
             ranks = ranks.reshape(-1)
         return ranks
+
+
+class NOIAAdditiveScaler(TransformerMixin, BaseEstimator):
+    """Scale each marker by the minor allele frequency
+
+    This is the same scaling applied to the Van Raden similarity computation
+    before the dot-product is taken.
+    It is somewhat analogous to mean-centering.
+
+    Examples:
+
+    >>> import numpy as np
+    >>> from selectml.sk.preprocessor import NOIAAdditiveScaler
+    >>> from selectml.data import basic
+    >>> X, _, _ = basic()
+    >>> X = np.unique(X, axis=0)
+    >>> sc = NOIAAdditiveScaler()
+    >>> trans = sc.fit_transform(X)
+    >>> trans
+    array([[-1.4, -0.4, -0.4,  0.6,  0.2, -0.2, -0.8, -1. ,  0.2, -0.4],
+           [-0.4,  1.6,  0.6, -0.4,  0.2, -0.2,  1.2, -1. ,  0.2, -0.4],
+           [ 0.6, -0.4, -1.4,  0.6, -0.8,  0.8, -0.8,  1. ,  1.2, -0.4],
+           [ 0.6, -0.4,  0.6, -1.4,  1.2,  0.8,  0.2,  1. , -0.8,  0.6],
+           [ 0.6, -0.4,  0.6,  0.6, -0.8, -1.2,  0.2,  0. , -0.8,  0.6]])
+    >>> assert (sc.inverse_transform(trans) == X).all()
+    """
+
+    requires_y: bool = False
+
+    def __init__(
+        self,
+        AA: int = 2,
+        Aa: int = 1,
+        aa: int = 0,
+        copy: bool = True
+    ):
+        self.AA = AA
+        self.Aa = Aa
+        self.aa = aa
+        self.copy = bool(copy)
+        return
+
+    def _reset(self):
+        """Reset internal data-dependent state of the scaler, if necessary.
+        __init__ parameters are not touched.
+        """
+
+        # Checking one attribute is enough, becase they are all set together
+        # in partial_fit
+        if hasattr(self, 'n_samples_seen_'):
+            del self.n_samples_seen_
+            del self.n_features_in_
+            del self.n_features_
+            del self.Aa_counts_
+            del self.aa_counts_
+
+    def partial_fit(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None
+    ) -> "NOIAAdditiveScaler":
+        """Online computation of min and max on X for later scaling.
+        All of X is processed as a single batch. This is intended for cases
+        when :meth:`fit` is not feasible due to very large number of
+        `n_samples` or because X is read from a continuous stream.
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            The data used to compute the mean and standard deviation
+            used for later scaling along the features axis.
+        y : None
+            Ignored.
+        Returns
+        -------
+        self : object
+            Fitted scaler.
+        """
+
+        first_pass: bool = not hasattr(self, 'n_samples_seen_')
+
+        X_: np.ndarray = check_array(
+            X,
+            accept_sparse=False,
+            accept_large_sparse=False,
+            dtype="numeric",
+            force_all_finite="allow-nan",
+            estimator=self
+        )
+
+        # np.isin(X[~np.isnan(X)], np.arange(self.ploidy + 1)).all()
+        all_ok = True
+
+        if not all_ok:
+            raise ValueError(
+                "Encountered a value less than 0 or greater "
+                f"than {self.ploidy}."
+            )
+
+        # Maybe raise a warning if no 0s or 2s i.e. maybe smaller ploidy than
+        # specified.
+
+        if first_pass:
+            self.n_samples_seen_: np.ndarray = (
+                (~np.isnan(X_))
+                .astype(int)
+                .sum(axis=0)
+            )
+            self.Aa_counts_: np.ndarray = (
+                (X_ == self.Aa)
+                .astype(int)
+                .sum(axis=0)
+            )
+            self.aa_counts_: np.ndarray = (
+                (X_ == self.aa)
+                .astype(int)
+                .sum(axis=0)
+            )
+        else:
+            assert X_.shape[1] == self.n_features_in_, \
+                "Must have same number of features"
+            self.n_samples_seen_ += (~np.isnan(X_)).astype(int).sum(axis=0)
+            self.Aa_counts_ += (
+                (X_ == self.Aa)
+                .astype(int)
+                .sum(axis=0)
+            )
+            self.aa_counts_ += (
+                (X_ == self.aa)
+                .astype(int)
+                .sum(axis=0)
+            )
+
+        self.n_features_in_: int = self.aa_counts_.shape[0]
+        self.n_features_ = self.n_features_in_
+        return self
+
+    def fit(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None
+    ) -> "NOIAAdditiveScaler":
+        """Compute the mean and std to be used for later scaling.
+        Parameters
+        ----------
+        X : {array-like, sparse matrix} of shape (n_samples, n_features)
+            The data used to compute the mean and standard deviation
+            used for later scaling along the features axis.
+        y : None
+            Ignored.
+        Returns
+        -------
+        self : object
+            Fitted scaler.
+        """
+
+        # Reset internal state before fitting
+        self._reset()
+        return self.partial_fit(X, y)
+
+    def transform(self, X: "npt.ArrayLike") -> np.ndarray:
+        """Scale features of X according to feature_range.
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Input data that will be transformed.
+        Returns
+        -------
+        Xt : ndarray of shape (n_samples, n_features)
+            Transformed data.
+        """
+
+        check_is_fitted(self, 'n_features_in_')
+
+        X_: np.ndarray = check_array(
+            X,
+            accept_sparse=False,
+            accept_large_sparse=False,
+            dtype="numeric",
+            force_all_finite="allow-nan",
+            estimator=self,
+        )
+
+        if X_.shape[1] != self.n_features_in_:
+            raise ValueError("Must have same number of features")
+
+        p_aa = self.aa_counts_ / self.n_samples_seen_
+        p_Aa = self.Aa_counts_ / self.n_samples_seen_
+
+        dom = -1 * (-p_Aa - 2 * p_aa) * (X_ == self.AA).astype(float)
+        het = -1 * (1 - p_Aa - 2 * p_aa) * (X_ == self.Aa).astype(float)
+        rec = -1 * (2 - p_Aa - 2 * p_aa) * (X_ == self.aa).astype(float)
+        return dom + het + rec
+
+    def inverse_transform(self, X: "npt.ArrayLike") -> np.ndarray:
+        """Undo the scaling of X according to feature_range.
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Input data that will be transformed. It cannot be sparse.
+        Returns
+        -------
+        Xt : ndarray of shape (n_samples, n_features)
+            Transformed data.
+        """
+        check_is_fitted(self, 'n_features_in_')
+
+        X_: np.ndarray = check_array(
+            X,
+            accept_sparse=False,
+            accept_large_sparse=False,
+            dtype="numeric",
+            force_all_finite="allow-nan",
+            estimator=self,
+        )
+
+        if X_.shape[1] != self.n_features_in_:
+            raise ValueError("Must have same number of features")
+
+        p_aa = self.aa_counts_ / self.n_samples_seen_
+        p_Aa = self.Aa_counts_ / self.n_samples_seen_
+
+        dom = self.AA * np.isclose(X_, -1 * (-p_Aa - 2 * p_aa)).astype(float)
+        het = self.Aa * np.isclose(X_, -1 * (1 - p_Aa - 2 * p_aa)).astype(float)  # noqa
+        rec = self.aa * np.isclose(X_, -1 * (2 - p_Aa - 2 * p_aa)).astype(float)  # noqa
+        return dom + het + rec
+
+
+class NOIADominanceScaler(TransformerMixin, BaseEstimator):
+    """Scale each marker by the minor allele frequency
+
+    This is the same scaling applied to the Van Raden similarity computation
+    before the dot-product is taken.
+    It is somewhat analogous to mean-centering.
+
+    Examples:
+
+    >>> import numpy as np
+    >>> from selectml.sk.preprocessor import NOIADominanceScaler
+    >>> from selectml.data import basic
+    >>> X, _, _ = basic()
+    >>> X = np.unique(X, axis=0)
+    >>> sc = NOIADominanceScaler()
+    >>> trans = sc.fit_transform(X)
+    >>> trans
+    array([[-0.375     ,  0.        ,  0.75      , -0.125     ,  0.57142857,
+             0.57142857, -0.28571429, -0.2       ,  0.57142857,  0.        ],
+           [ 0.75      ,  0.        , -0.125     ,  0.75      ,  0.57142857,
+             0.57142857, -0.57142857, -0.2       ,  0.57142857,  0.        ],
+           [-0.125     ,  0.        , -0.375     , -0.125     , -0.28571429,
+            -0.28571429, -0.28571429, -0.2       , -0.57142857,  0.        ],
+           [-0.125     ,  0.        , -0.125     , -0.375     , -0.57142857,
+            -0.28571429,  0.57142857, -0.2       , -0.28571429,  0.        ],
+           [-0.125     ,  0.        , -0.125     , -0.125     , -0.28571429,
+            -0.57142857,  0.57142857,  0.8       , -0.28571429,  0.        ]])
+    """
+
+    requires_y: bool = False
+
+    def __init__(
+        self,
+        AA: float = 2.,
+        Aa: float = 1.,
+        aa: float = 0.,
+        copy: bool = True
+    ):
+        self.AA = AA
+        self.Aa = Aa
+        self.aa = aa
+        self.copy = bool(copy)
+        return
+
+    def _reset(self):
+        """Reset internal data-dependent state of the scaler, if necessary.
+        __init__ parameters are not touched.
+        """
+
+        # Checking one attribute is enough, becase they are all set together
+        # in partial_fit
+        if hasattr(self, 'n_samples_seen_'):
+            del self.n_samples_seen_
+            del self.n_features_in_
+            del self.n_features_
+            del self.AA_counts_
+            del self.Aa_counts_
+            del self.aa_counts_
+
+    def partial_fit(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None
+    ) -> "NOIADominanceScaler":
+        """Online computation of min and max on X for later scaling.
+        All of X is processed as a single batch. This is intended for cases
+        when :meth:`fit` is not feasible due to very large number of
+        `n_samples` or because X is read from a continuous stream.
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            The data used to compute the mean and standard deviation
+            used for later scaling along the features axis.
+        y : None
+            Ignored.
+        Returns
+        -------
+        self : object
+            Fitted scaler.
+        """
+
+        first_pass: bool = not hasattr(self, 'n_samples_seen_')
+
+        X_: np.ndarray = check_array(
+            X,
+            accept_sparse=False,
+            accept_large_sparse=False,
+            dtype="numeric",
+            force_all_finite="allow-nan",
+            estimator=self
+        )
+
+        # np.isin(X[~np.isnan(X)], np.arange(self.ploidy + 1)).all()
+        all_ok = True
+
+        if not all_ok:
+            raise ValueError(
+                "Encountered a value less than 0 or greater "
+                f"than {self.ploidy}."
+            )
+
+        # Maybe raise a warning if no 0s or 2s i.e. maybe smaller ploidy than
+        # specified.
+
+        if first_pass:
+            self.n_samples_seen_: np.ndarray = (
+                (~np.isnan(X_))
+                .astype(int)
+                .sum(axis=0)
+            )
+            self.AA_counts_: np.ndarray = (
+                (X_ == self.AA)
+                .astype(int)
+                .sum(axis=0)
+            )
+            self.Aa_counts_: np.ndarray = (
+                (X_ == self.Aa)
+                .astype(int)
+                .sum(axis=0)
+            )
+            self.aa_counts_: np.ndarray = (
+                (X_ == self.aa)
+                .astype(int)
+                .sum(axis=0)
+            )
+        else:
+            assert X_.shape[1] == self.n_features_in_, \
+                "Must have same number of features"
+            self.n_samples_seen_ += (~np.isnan(X_)).astype(int).sum(axis=0)
+            self.AA_counts_ += (
+                (X_ == self.AA)
+                .astype(int)
+                .sum(axis=0)
+            )
+            self.Aa_counts_ += (
+                (X_ == self.Aa)
+                .astype(int)
+                .sum(axis=0)
+            )
+            self.aa_counts_ += (
+                (X_ == self.aa)
+                .astype(int)
+                .sum(axis=0)
+            )
+
+        self.n_features_in_: int = self.aa_counts_.shape[0]
+        self.n_features_ = self.n_features_in_
+        return self
+
+    def fit(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None
+    ) -> "NOIADominanceScaler":
+        """Compute the mean and std to be used for later scaling.
+        Parameters
+        ----------
+        X : {array-like, sparse matrix} of shape (n_samples, n_features)
+            The data used to compute the mean and standard deviation
+            used for later scaling along the features axis.
+        y : None
+            Ignored.
+        Returns
+        -------
+        self : object
+            Fitted scaler.
+        """
+
+        # Reset internal state before fitting
+        self._reset()
+        return self.partial_fit(X, y)
+
+    def transform(self, X: "npt.ArrayLike") -> np.ndarray:
+        """Scale features of X according to feature_range.
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Input data that will be transformed.
+        Returns
+        -------
+        Xt : ndarray of shape (n_samples, n_features)
+            Transformed data.
+        """
+
+        check_is_fitted(self, 'n_features_in_')
+
+        X_: np.ndarray = check_array(
+            X,
+            accept_sparse=False,
+            accept_large_sparse=False,
+            dtype="numeric",
+            force_all_finite="allow-nan",
+            estimator=self,
+        )
+
+        if X_.shape[1] != self.n_features_in_:
+            raise ValueError("Must have same number of features")
+
+        p_aa = self.aa_counts_ / self.n_samples_seen_
+        p_Aa = self.Aa_counts_ / self.n_samples_seen_
+        p_AA = self.AA_counts_ / self.n_samples_seen_
+
+        dom_vals = -1 * (2 * p_Aa * p_aa) / (p_AA + p_aa - (p_AA - p_aa) ** 2)
+        het_vals = (4 * p_AA * p_aa) / (p_AA + p_aa - (p_AA - p_aa) ** 2)
+        rec_vals = -1 * (2 * p_AA * p_Aa) / (p_AA + p_aa - (p_AA - p_aa) ** 2)
+        dom = dom_vals * np.isclose(X_, self.AA).astype(float)
+        het = het_vals * np.isclose(X_, self.Aa).astype(float)
+        rec = rec_vals * np.isclose(X_, self.aa).astype(float)
+        return dom + het + rec

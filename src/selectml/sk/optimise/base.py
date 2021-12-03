@@ -540,9 +540,8 @@ class OptimiseModel(object):
 
 class SKModel(OptimiseModel):
 
-    @classmethod
     def predict(
-        cls,
+        self,
         model,
         X: "npt.ArrayLike",
         grouping: Optional["npt.ArrayLike"] = None
@@ -694,6 +693,11 @@ class SKModel(OptimiseModel):
             "manhattan",
             "euclidean"
         ],
+        feature_selectors: List[str] = [
+            "passthrough",
+            "rf",
+            "relief"
+        ]
     ) -> Dict[str, BaseTypes]:
         params = {}
         preprocessor = trial.suggest_categorical(
@@ -701,11 +705,43 @@ class SKModel(OptimiseModel):
             options
         )
         params["dist_preprocessor"] = preprocessor
+
+        if preprocessor == "drop":
+            return params
+
+        selector = trial.suggest_categorical(
+            "dist_feature_selector",
+            feature_selectors
+        )
+
+        params["dist_feature_selector"] = selector
+        nmarkers = len(self.marker_columns)
+
+        params["dist_feature_selection_nfeatures"] = (
+            trial.suggest_int(
+                "dist_feature_selection_nfeatures",
+                min([100, round(nmarkers / 2)]),
+                nmarkers - 1,
+            )
+        )
+
+        if selector == "rf":
+            params["dist_feature_selection_rf_min_impurity_decrease"] = (
+                trial.suggest_float(
+                    "dist_feature_selection_rf_min_impurity_decrease",
+                    0,
+                    10
+                )
+            )
+
         return params
 
-    def _sample_dist_preprocessing_model(self, params: Dict[str, Any]):
+    def _sample_dist_preprocessing_model(self, params: Dict[str, Any]):  # noqa
         from sklearn.preprocessing import RobustScaler
         from sklearn.pipeline import Pipeline
+        from sklearn.feature_selection import SelectFromModel
+        from sklearn.ensemble import RandomForestRegressor
+        from ..feature_selection import MultiSURF
         from ..distance import (
             VanRadenSimilarity,
             ManhattanDistance,
@@ -734,8 +770,52 @@ class SKModel(OptimiseModel):
             return p
         elif p == "drop":
             return p
-        else:
-            return Pipeline([("dist", p), ("scaler", RobustScaler())])
+
+        selector = params["dist_feature_selector"]
+        wrap_sfm = False
+        if selector == "passthrough":
+            s = "passthrough"
+
+        elif selector == "rf":
+            wrap_sfm = True
+            s = RandomForestRegressor(
+                criterion="mae",
+                max_depth=4,
+                n_estimators=1000,
+                max_features=0.1,
+                min_samples_split=5,
+                min_samples_leaf=1,
+                min_impurity_decrease=(
+                    params["dist_feature_selection_rf_min_impurity_decrease"]
+                ),
+                bootstrap=False,
+                oob_score=False,
+                n_jobs=1,
+                random_state=self.seed,
+            )
+
+        elif selector == "relief":
+            s = MultiSURF(
+                n=params["dist_feature_selection_nfeatures"],
+                nepoch=10,
+                sd=1,
+                random_state=self.seed
+            )
+
+        if wrap_sfm:
+            nfeatures = params["dist_feature_selection_nfeatures"]
+            s = SelectFromModel(
+                estimator=s,
+                prefit=False,
+                max_features=nfeatures
+            )
+
+        steps = []
+        if s != "passthrough":
+            steps.append(("selector", s))
+
+        steps.extend([("dist", p), ("scaler", RobustScaler())])
+        return Pipeline(steps)
 
     def _sample_nonlinear_preprocessing_params(
         self,
@@ -746,6 +826,11 @@ class SKModel(OptimiseModel):
             "laplacian",
             "poly"
         ],
+        feature_selectors: List[str] = [
+            "passthrough",
+            "rf",
+            "relief"
+        ]
     ) -> Dict[str, BaseTypes]:
         params = {}
         preprocessor = trial.suggest_categorical(
@@ -785,12 +870,44 @@ class SKModel(OptimiseModel):
                 0.1,
                 20
             )
+
+        if preprocessor == "drop":
+            return params
+
+        selector = trial.suggest_categorical(
+            "nonlinear_feature_selector",
+            feature_selectors
+        )
+
+        params["nonlinear_feature_selector"] = selector
+        nmarkers = len(self.marker_columns)
+
+        params["nonlinear_feature_selection_nfeatures"] = (
+            trial.suggest_int(
+                "nonlinear_feature_selection_nfeatures",
+                min([100, round(nmarkers / 2)]),
+                nmarkers - 1,
+            )
+        )
+
+        if selector == "rf":
+            params["nonlinear_feature_selection_rf_min_impurity_decrease"] = (
+                trial.suggest_float(
+                    "nonlinear_feature_selection_rf_min_impurity_decrease",
+                    0,
+                    10
+                )
+            )
+
         return params
 
     def _sample_nonlinear_preprocessing_model(self, params: Dict[str, Any]):
         from sklearn.kernel_approximation import Nystroem
         from sklearn.preprocessing import RobustScaler
         from sklearn.pipeline import Pipeline
+        from sklearn.feature_selection import SelectFromModel
+        from sklearn.ensemble import RandomForestRegressor
+        from ..feature_selection import MultiSURF
 
         preprocessor = params["nonlinear_preprocessor"]
 
@@ -802,7 +919,8 @@ class SKModel(OptimiseModel):
             p = Nystroem(
                 kernel="rbf",
                 gamma=params["rbf_gamma"],
-                n_components=ncomponents
+                n_components=ncomponents,
+                random_state=self.seed,
             )
 
         elif preprocessor == "laplacian":
@@ -810,7 +928,8 @@ class SKModel(OptimiseModel):
             p = Nystroem(
                 kernel="laplacian",
                 gamma=params["laplacian_gamma"],
-                n_components=ncomponents
+                n_components=ncomponents,
+                random_state=self.seed,
             )
 
         elif preprocessor == "poly":
@@ -819,6 +938,7 @@ class SKModel(OptimiseModel):
                 kernel="poly",
                 gamma=params["poly_gamma"],
                 n_components=ncomponents,
+                random_state=self.seed,
                 degree=2
             )
 
@@ -826,8 +946,52 @@ class SKModel(OptimiseModel):
             return None
         elif p == "drop":
             return p
-        else:
-            return Pipeline([("nonlinear", p), ("scaler", RobustScaler())])
+
+        selector = params["nonlinear_feature_selector"]
+        wrap_sfm = False
+        if selector == "passthrough":
+            s = "passthrough"
+
+        elif selector == "rf":
+            wrap_sfm = True
+            s = RandomForestRegressor(
+                criterion="mae",
+                max_depth=4,
+                n_estimators=1000,
+                max_features=0.1,
+                min_samples_split=5,
+                min_samples_leaf=1,
+                min_impurity_decrease=(
+                    params["nonlinear_feature_selection_rf_min_impurity_decrease"]  # noqa
+                ),
+                bootstrap=False,
+                oob_score=False,
+                n_jobs=1,
+                random_state=self.seed,
+            )
+
+        elif selector == "relief":
+            s = MultiSURF(
+                n=params["nonlinear_feature_selection_nfeatures"],
+                nepoch=10,
+                sd=1,
+                random_state=self.seed
+            )
+
+        if wrap_sfm:
+            nfeatures = params["nonlinear_feature_selection_nfeatures"]
+            s = SelectFromModel(
+                estimator=s,
+                prefit=False,
+                max_features=nfeatures
+            )
+
+        steps = []
+        if s != "passthrough":
+            steps.append(("selector", s))
+
+        steps.extend([("nonlinear", p), ("scaler", RobustScaler())])
+        return Pipeline(steps)
 
     def _sample_feature_selection_params(
         self,
@@ -854,7 +1018,6 @@ class SKModel(OptimiseModel):
                     "feature_selection_nfeatures",
                     min([100, round(nmarkers / 2)]),
                     nmarkers - 1,
-                    step=min([100, round(nmarkers / 4)])
                 )
             )
 
@@ -864,7 +1027,6 @@ class SKModel(OptimiseModel):
                     "feature_selection_nfeatures",
                     min([100, round(nmarkers / 2)]),
                     nmarkers - 1,
-                    step=min([100, round(nmarkers / 4)]),
                 )
             )
 
@@ -897,10 +1059,10 @@ class SKModel(OptimiseModel):
             wrap_sfm = True
             s = RandomForestRegressor(
                 criterion="mae",
-                max_depth=5,
-                n_estimators=500,
+                max_depth=4,
+                n_estimators=1000,
                 max_features=0.1,
-                min_samples_split=2,
+                min_samples_split=5,
                 min_samples_leaf=1,
                 min_impurity_decrease=(
                     params["feature_selection_rf_min_impurity_decrease"]
@@ -915,7 +1077,8 @@ class SKModel(OptimiseModel):
             s = MultiSURF(
                 n=params["feature_selection_nfeatures"],
                 nepoch=10,
-                sd=1
+                sd=1,
+                random_state=self.seed
             )
         elif selector == "maf":
             s = MAFSelector(
@@ -1059,7 +1222,8 @@ class SKModel(OptimiseModel):
             p = Nystroem(
                 kernel="poly",
                 n_components=ncomponents,
-                degree=2
+                degree=2,
+                random_state=self.seed
             )
         return p
 
@@ -1291,7 +1455,6 @@ class XGBBaseModel(OptimiseModel):
         sample_weights: Optional["npt.ArrayLike"] = None,
         **kwargs
     ):
-
         import xgboost as xgb
         from copy import deepcopy
         params = deepcopy(params)
@@ -1482,7 +1645,6 @@ class TFBaseModel(OptimiseModel):
                     "feature_selection_nfeatures",
                     min([100, round(nmarkers / 2)]),
                     nmarkers - 1,
-                    step=min([100, round(nmarkers / 4)])
                 )
             )
 
@@ -1492,7 +1654,6 @@ class TFBaseModel(OptimiseModel):
                     "feature_selection_nfeatures",
                     min([100, round(nmarkers / 2)]),
                     nmarkers - 1,
-                    step=min([100, round(nmarkers / 4)]),
                 )
             )
 
@@ -1525,10 +1686,10 @@ class TFBaseModel(OptimiseModel):
             wrap_sfm = True
             s = RandomForestRegressor(
                 criterion="mae",
-                max_depth=5,
-                n_estimators=500,
+                max_depth=4,
+                n_estimators=1000,
                 max_features=0.1,
-                min_samples_split=2,
+                min_samples_split=5,
                 min_samples_leaf=1,
                 min_impurity_decrease=(
                     params["feature_selection_rf_min_impurity_decrease"]
@@ -1543,7 +1704,8 @@ class TFBaseModel(OptimiseModel):
             s = MultiSURF(
                 n=params["feature_selection_nfeatures"],
                 nepoch=10,
-                sd=1
+                sd=1,
+                random_state=self.seed
             )
         elif selector == "maf":
             s = MAFSelector(
@@ -1630,3 +1792,891 @@ class TFBaseModel(OptimiseModel):
         grouping_trans = StandardScaler()
 
         return target, grouping_trans, marker_trans
+
+
+class BGLRBaseModel(SKModel):
+
+    def predict(self, model, X):
+        X_markers, X_grouping = self._split_groups(np.array(X))
+        preds = model.predict((X_markers, X_grouping))
+        return preds
+
+    def fit(
+        self,
+        params: Dict[str, Any],
+        X: "npt.ArrayLike",
+        y: "npt.ArrayLike",
+        individuals: Optional["npt.ArrayLike"] = None,
+        grouping: Optional["npt.ArrayLike"] = None,
+        sample_weights: Optional["npt.ArrayLike"] = None,
+        **kwargs
+    ):
+        model = self.model(params)
+        X_markers, X_grouping = self._split_groups(np.array(X))
+        model.fit(
+            (X_markers, X_grouping),
+            y,
+            sample_weights=sample_weights,
+            individuals=grouping
+        )
+        return model
+
+    def _split_groups(
+        self,
+        X: "npt.ArrayLike"
+    ) -> "Tuple[np.ndarray, Optional[np.ndarray]]":
+        if len(self.grouping_columns) == 0:
+            return np.array(X), None
+
+        grouping_columns = slice(0, len(self.grouping_columns))
+        marker_columns = slice(len(self.grouping_columns), None)
+
+        X_ = np.array(X)
+
+        X_grouping = X_[:, grouping_columns]
+        X_markers = X_[:, marker_columns]
+        assert X_.shape[1] == (X_grouping.shape[1] + X_markers.shape[1])
+        return X_markers, X_grouping
+
+    def _sample_transformed_target_params(
+        self,
+        trial: "optuna.Trial",
+        options: List[str] = [
+            "passthrough",
+            "stdnorm",
+            "quantile"
+        ],
+    ) -> Dict[str, BaseTypes]:
+        params = {}
+
+        target = trial.suggest_categorical(
+            "target_transformer",
+            options
+        )
+        params["target_transformer"] = target
+
+        if target == "quantile":
+            params["target_transformer_quantile_distribution"] = (
+                trial.suggest_categorical(
+                    "target_transformer_quantile_distribution",
+                    ["uniform", "normal"]
+                )
+            )
+        return params
+
+    def _sample_transformed_target_model(self, params: Dict[str, Any]):
+        from sklearn.preprocessing import StandardScaler, QuantileTransformer
+
+        preprocessor = params["target_transformer"]
+
+        if preprocessor == "stdnorm":
+            g = StandardScaler()
+        elif preprocessor == "quantile":
+            d = params["target_transformer_quantile_distribution"]
+            g = QuantileTransformer(
+                output_distribution=d,
+                n_quantiles=min([1000, round(params["nsamples"] / 2)])
+            )
+        else:
+            assert preprocessor == "passthrough"
+            g = None  # Unity function
+
+        return g
+
+    def _sample_marker_preprocessing_params(
+        self,
+        trial: "optuna.Trial",
+        options: List[str] = [
+            "drop",
+            "passthrough",
+            "maf",
+            "onehot",
+        ],
+    ) -> Dict[str, BaseTypes]:
+        params = {}
+        preprocessor = trial.suggest_categorical(
+            "marker_preprocessor",
+            options
+        )
+        params["marker_preprocessor"] = preprocessor
+        return params
+
+    def _sample_marker_preprocessing_model(self, params: Dict[str, Any]):
+        from sklearn.preprocessing import OneHotEncoder
+        from selectml.sk.preprocessor import (
+            MAFScaler
+        )
+
+        preprocessor = params["marker_preprocessor"]
+
+        if preprocessor == "drop":
+            g = "drop"
+
+        elif preprocessor == "passthrough":
+            g = "passthrough"
+
+        elif preprocessor == "onehot":
+            g = OneHotEncoder(
+                categories="auto",
+                drop=None,
+                handle_unknown="ignore"
+            )
+
+        elif preprocessor == "maf":
+            g = MAFScaler(ploidy=self.ploidy)
+
+        return g
+
+    def _sample_dist_preprocessing_params(
+        self,
+        trial: "optuna.Trial",
+        options: List[str] = [
+            "drop",
+            "vanraden",
+            "hamming",
+            "manhattan",
+            "euclidean"
+        ],
+        feature_selectors: List[str] = [
+            "passthrough",
+            "rf",
+            "relief"
+        ]
+    ) -> Dict[str, BaseTypes]:
+        params = {}
+        preprocessor = trial.suggest_categorical(
+            "dist_preprocessor",
+            options
+        )
+        params["dist_preprocessor"] = preprocessor
+
+        if preprocessor == "drop":
+            return params
+
+        selector = trial.suggest_categorical(
+            "dist_feature_selector",
+            feature_selectors
+        )
+
+        params["dist_feature_selector"] = selector
+        nmarkers = len(self.marker_columns)
+
+        params["dist_feature_selection_nfeatures"] = (
+            trial.suggest_int(
+                "dist_feature_selection_nfeatures",
+                min([100, round(nmarkers / 2)]),
+                nmarkers - 1,
+            )
+        )
+
+        if selector == "rf":
+            params["dist_feature_selection_rf_min_impurity_decrease"] = (
+                trial.suggest_float(
+                    "dist_feature_selection_rf_min_impurity_decrease",
+                    0,
+                    10
+                )
+            )
+
+        return params
+
+    def _sample_dist_preprocessing_model(self, params: Dict[str, Any]):  # noqa
+        from sklearn.preprocessing import RobustScaler
+        from sklearn.pipeline import Pipeline
+        from sklearn.feature_selection import SelectFromModel
+        from sklearn.ensemble import RandomForestRegressor
+        from ..feature_selection import MultiSURF
+        from ..distance import (
+            VanRadenSimilarity,
+            ManhattanDistance,
+            EuclideanDistance,
+            HammingDistance,
+        )
+
+        preprocessor = params["dist_preprocessor"]
+
+        if preprocessor == "drop":
+            return "drop"
+
+        if preprocessor == "vanraden":
+            p = VanRadenSimilarity(ploidy=self.ploidy, distance=True)
+
+        elif preprocessor == "hamming":
+            p = HammingDistance()
+
+        elif preprocessor == "manhattan":
+            p = ManhattanDistance()
+
+        elif preprocessor == "euclidean":
+            p = EuclideanDistance()
+
+        if p is None:
+            return p
+        elif p == "drop":
+            return p
+
+        selector = params["dist_feature_selector"]
+        wrap_sfm = False
+        if selector == "passthrough":
+            s = "passthrough"
+
+        elif selector == "rf":
+            wrap_sfm = True
+            s = RandomForestRegressor(
+                criterion="mae",
+                max_depth=4,
+                n_estimators=1000,
+                max_features=0.1,
+                min_samples_split=5,
+                min_samples_leaf=1,
+                min_impurity_decrease=(
+                    params["dist_feature_selection_rf_min_impurity_decrease"]
+                ),
+                bootstrap=False,
+                oob_score=False,
+                n_jobs=1,
+                random_state=self.seed,
+            )
+
+        elif selector == "relief":
+            s = MultiSURF(
+                n=params["dist_feature_selection_nfeatures"],
+                nepoch=10,
+                sd=1,
+                random_state=self.seed
+            )
+
+        if wrap_sfm:
+            nfeatures = params["dist_feature_selection_nfeatures"]
+            s = SelectFromModel(
+                estimator=s,
+                prefit=False,
+                max_features=nfeatures
+            )
+
+        steps = []
+        if s != "passthrough":
+            steps.append(("selector", s))
+
+        steps.extend([("dist", p), ("scaler", RobustScaler())])
+        return Pipeline(steps)
+
+    def _sample_nonlinear_preprocessing_params(
+        self,
+        trial: "optuna.Trial",
+        options: List[str] = [
+            "drop",
+            "rbf",
+            "laplacian",
+            "poly"
+        ],
+        feature_selectors: List[str] = [
+            "passthrough",
+            "rf",
+            "relief"
+        ]
+    ) -> Dict[str, BaseTypes]:
+        params = {}
+        preprocessor = trial.suggest_categorical(
+            "nonlinear_preprocessor",
+            options
+        )
+        params["nonlinear_preprocessor"] = preprocessor
+
+        nsamples = floor(self.markers.shape[0] / 2)
+
+        ncomponents = min([
+            nsamples,
+            floor(log10(nsamples) * 50)
+        ])
+
+        if preprocessor in ("rbf", "laplacian", "poly"):
+            params["nonlinear_ncomponents"] = trial.suggest_categorical(
+                "nonlinear_ncomponents",
+                [ncomponents]
+            )
+
+        if preprocessor == "rbf":
+            params["rbf_gamma"] = trial.suggest_float(
+                "rbf_gamma",
+                1e-15,
+                0.5
+            )
+        elif preprocessor == "laplacian":
+            params["laplacian_gamma"] = trial.suggest_float(
+                "laplacian_gamma",
+                1e-15,
+                0.5
+            )
+        elif preprocessor == "poly":
+            params["poly_gamma"] = trial.suggest_float(
+                "poly_gamma",
+                0.1,
+                20
+            )
+
+        if preprocessor == "drop":
+            return params
+
+        selector = trial.suggest_categorical(
+            "nonlinear_feature_selector",
+            feature_selectors
+        )
+
+        params["nonlinear_feature_selector"] = selector
+        nmarkers = len(self.marker_columns)
+
+        params["nonlinear_feature_selection_nfeatures"] = (
+            trial.suggest_int(
+                "nonlinear_feature_selection_nfeatures",
+                min([100, round(nmarkers / 2)]),
+                nmarkers - 1,
+            )
+        )
+
+        if selector == "rf":
+            params["nonlinear_feature_selection_rf_min_impurity_decrease"] = (
+                trial.suggest_float(
+                    "nonlinear_feature_selection_rf_min_impurity_decrease",
+                    0,
+                    10
+                )
+            )
+
+        return params
+
+    def _sample_nonlinear_preprocessing_model(self, params: Dict[str, Any]):
+        from sklearn.kernel_approximation import Nystroem
+        from sklearn.preprocessing import RobustScaler
+        from sklearn.pipeline import Pipeline
+        from sklearn.feature_selection import SelectFromModel
+        from sklearn.ensemble import RandomForestRegressor
+        from ..feature_selection import MultiSURF
+        from ..distance import EuclideanDistance
+
+        preprocessor = params["nonlinear_preprocessor"]
+
+        if preprocessor == "drop":
+            p = "drop"
+
+        elif preprocessor == "rbf":
+            ncomponents = params["nonlinear_ncomponents"]
+            p = Nystroem(
+                kernel="rbf",
+                gamma=params["rbf_gamma"],
+                n_components=ncomponents,
+                random_state=self.seed,
+            )
+
+        elif preprocessor == "laplacian":
+            ncomponents = params["nonlinear_ncomponents"]
+            p = Nystroem(
+                kernel="laplacian",
+                gamma=params["laplacian_gamma"],
+                n_components=ncomponents,
+                random_state=self.seed,
+            )
+
+        elif preprocessor == "poly":
+            ncomponents = params["nonlinear_ncomponents"]
+            p = Nystroem(
+                kernel="poly",
+                gamma=params["poly_gamma"],
+                n_components=ncomponents,
+                random_state=self.seed,
+                degree=2
+            )
+
+        if p is None:
+            return None
+        elif p == "drop":
+            return p
+
+        selector = params["nonlinear_feature_selector"]
+        wrap_sfm = False
+        if selector == "passthrough":
+            s = "passthrough"
+
+        elif selector == "rf":
+            wrap_sfm = True
+            s = RandomForestRegressor(
+                criterion="mae",
+                max_depth=4,
+                n_estimators=1000,
+                max_features=0.1,
+                min_samples_split=5,
+                min_samples_leaf=1,
+                min_impurity_decrease=(
+                    params["nonlinear_feature_selection_rf_min_impurity_decrease"]  # noqa
+                ),
+                bootstrap=False,
+                oob_score=False,
+                n_jobs=1,
+                random_state=self.seed,
+            )
+
+        elif selector == "relief":
+            s = MultiSURF(
+                n=params["nonlinear_feature_selection_nfeatures"],
+                nepoch=10,
+                sd=1,
+                random_state=self.seed
+            )
+
+        if wrap_sfm:
+            nfeatures = params["nonlinear_feature_selection_nfeatures"]
+            s = SelectFromModel(
+                estimator=s,
+                prefit=False,
+                max_features=nfeatures
+            )
+
+        steps = []
+        if s != "passthrough":
+            steps.append(("selector", s))
+
+        steps.extend([
+            ("nonlinear", p),
+            ("scaler", RobustScaler()),
+            ("dist", EuclideanDistance())
+        ])
+        return Pipeline(steps)
+
+    def _sample_feature_selection_params(
+        self,
+        trial: "optuna.Trial",
+        options: List[str] = ["drop", "passthrough", "rf", "relief"]
+    ) -> Dict[str, BaseTypes]:
+        params = {}
+
+        selector = trial.suggest_categorical("feature_selector", options)
+        params["feature_selector"] = selector
+        nmarkers = len(self.marker_columns)
+
+        if selector == "rf":
+            params["feature_selection_rf_min_impurity_decrease"] = (
+                trial.suggest_float(
+                    "feature_selection_rf_min_impurity_decrease",
+                    0,
+                    10
+                )
+            )
+
+            params["feature_selection_nfeatures"] = (
+                trial.suggest_int(
+                    "feature_selection_nfeatures",
+                    min([100, round(nmarkers / 2)]),
+                    nmarkers - 1,
+                )
+            )
+
+        elif selector == "relief":
+            params["feature_selection_nfeatures"] = (
+                trial.suggest_int(
+                    "feature_selection_nfeatures",
+                    min([100, round(nmarkers / 2)]),
+                    nmarkers - 1,
+                )
+            )
+
+        elif selector == "maf":
+            params["feature_selection_maf_threshold"] = (
+                trial.suggest_uniform(
+                    "feature_selection_maf_threshold",
+                    0.0001,
+                    0.2,
+                )
+            )
+
+        return params
+
+    def _sample_feature_selection_model(self, params: Dict[str, Any]):
+        from sklearn.feature_selection import SelectFromModel
+        from sklearn.ensemble import RandomForestRegressor
+        from ..feature_selection import (MAFSelector, MultiSURF)
+
+        selector = params["feature_selector"]
+
+        wrap_sfm = False
+        if selector == "drop":
+            s = "drop"
+
+        elif selector == "passthrough":
+            s = "passthrough"
+
+        elif selector == "rf":
+            wrap_sfm = True
+            s = RandomForestRegressor(
+                criterion="mae",
+                max_depth=4,
+                n_estimators=1000,
+                max_features=0.1,
+                min_samples_split=5,
+                min_samples_leaf=1,
+                min_impurity_decrease=(
+                    params["feature_selection_rf_min_impurity_decrease"]
+                ),
+                bootstrap=False,
+                oob_score=False,
+                n_jobs=1,
+                random_state=self.seed,
+            )
+
+        elif selector == "relief":
+            s = MultiSURF(
+                n=params["feature_selection_nfeatures"],
+                nepoch=10,
+                sd=1,
+                random_state=self.seed
+            )
+        elif selector == "maf":
+            s = MAFSelector(
+                threshold=params["feature_selection_maf_threshold"],
+                ploidy=self.ploidy
+            )
+
+        if wrap_sfm:
+            nfeatures = params["feature_selection_nfeatures"]
+            s = SelectFromModel(
+                estimator=s,
+                prefit=False,
+                max_features=nfeatures
+            )
+
+        return s
+
+    def _sample_grouping_preprocessing_params(
+        self,
+        trial: "optuna.Trial",
+        grouping_options: List[str] = ["drop", "passthrough",
+                                       "onehot", "pca"]
+    ) -> Dict[str, BaseTypes]:
+        params = {}
+
+        if len(self.grouping_columns) > 0:
+            preprocessor = trial.suggest_categorical(
+                "grouping_preprocessor",
+                grouping_options
+            )
+        else:
+            preprocessor = trial.suggest_categorical(
+                "grouping_preprocessor",
+                ["drop"]
+            )
+        params["grouping_preprocessor"] = preprocessor
+
+        if preprocessor in ("factor", "pca"):
+            # 1->1 10->3 100->10
+            ncomponents = floor(sqrt(len(self.grouping_columns)))
+            params["grouping_ncomponents"] = trial.suggest_categorical(
+                "grouping_ncomponents",
+                [ncomponents]
+            )
+        return params
+
+    def _sample_grouping_preprocessing_model(self, params: Dict[str, Any]):
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import OneHotEncoder
+        from sklearn.decomposition import FactorAnalysis, TruncatedSVD
+
+        preprocessor = params["grouping_preprocessor"]
+
+        if preprocessor == "drop":
+            g = "drop"
+
+        elif preprocessor == "passthrough":
+            g = "passthrough"
+
+        elif preprocessor == "onehot":
+            g = OneHotEncoder(
+                categories="auto",
+                drop="if_binary",
+                handle_unknown="error",
+                sparse=False,
+            )
+
+        elif preprocessor == "factor":
+            g = Pipeline([
+                (
+                    "ohe",
+                    OneHotEncoder(
+                        categories="auto",
+                        drop=None,
+                        handle_unknown="ignore",
+                        sparse=False
+                    )
+                ),
+                (
+                    "factor",
+                    FactorAnalysis(n_components=params["grouping_ncomponents"])
+                )
+            ])
+        elif preprocessor == "pca":
+            g = Pipeline([
+                (
+                    "ohe",
+                    OneHotEncoder(
+                        categories="auto",
+                        drop=None,
+                        handle_unknown="ignore"
+                    )
+                ),
+                (
+                    "pca",
+                    TruncatedSVD(n_components=params["grouping_ncomponents"])
+                )
+            ])
+
+        return g
+
+    def _sample_interactions_preprocessing_params(
+        self,
+        trial: "optuna.Trial",
+        options: List[str] = ["drop", "poly"]
+    ) -> Dict[str, BaseTypes]:
+        params = {}
+        preprocessor = trial.suggest_categorical(
+            "interactions",
+            options
+        )
+
+        params["interactions"] = preprocessor
+
+        nsamples = floor(self.markers.shape[0] / 2)
+        ncomponents = min([
+            nsamples,
+            floor(log10(nsamples) * 50)
+        ])
+
+        if preprocessor == "poly":
+            params["interactions_ncomponents"] = trial.suggest_categorical(
+                "interactions_ncomponents",
+                [ncomponents]
+            )
+
+        return params
+
+    def _sample_interactions_preprocessing_model(
+        self,
+        params: Dict[str, Any],
+    ):
+        from sklearn.kernel_approximation import Nystroem
+
+        preprocessor = params["interactions"]
+
+        if preprocessor == "drop":
+            p = "drop"
+        elif preprocessor == "poly":
+            ncomponents = params["interactions_ncomponents"]
+            p = Nystroem(
+                kernel="poly",
+                n_components=ncomponents,
+                degree=2,
+                random_state=self.seed
+            )
+        return p
+
+    def sample_preprocessing_params(
+        self,
+        trial: "optuna.Trial",
+        target_options: List[str] = [
+            "passthrough",
+            "stdnorm",
+            "quantile",
+        ],
+        marker_options: List[str] = [
+            "drop",
+            "maf",
+            "passthrough",
+            "onehot",
+        ],
+        dist_options: List[str] = [
+            "drop",
+            "vanraden",
+            "hamming",
+            "manhattan",
+            "euclidean",
+        ],
+        nonlinear_options: List[str] = [
+            "drop",
+            "rbf",
+            "laplacian",
+            "poly"
+        ],
+        feature_selection_options: List[str] = [
+            "drop",
+            "passthrough",
+            "rf",
+            "relief",
+        ],
+        grouping_options: List[str] = ["drop", "passthrough",
+                                       "onehot", "pca"],
+        grouping_interaction_options: List[str] = ["drop", "poly"]
+    ) -> Dict[str, BaseTypes]:
+        params = {}
+        params.update(
+            self._sample_transformed_target_params(trial, target_options)
+        )
+        params.update(self._sample_marker_preprocessing_params(
+            trial,
+            marker_options
+        ))
+        params.update(self._sample_dist_preprocessing_params(
+            trial,
+            dist_options
+        ))
+        params.update(self._sample_nonlinear_preprocessing_params(
+            trial,
+            nonlinear_options
+        ))
+        params.update(self._sample_feature_selection_params(
+            trial,
+            feature_selection_options
+        ))
+        params.update(self._sample_grouping_preprocessing_params(
+            trial,
+            grouping_options
+        ))
+        params.update(
+            self._sample_interactions_preprocessing_params(
+                trial,
+                grouping_interaction_options
+            )
+        )
+
+        nsamples = self.markers.shape[0]
+        nparams = 0
+        if (
+            params["marker_preprocessor"] == "drop" or
+            params["feature_selector"] == "drop"
+        ):
+            pass
+        elif params["feature_selector"] == "passthrough":
+            nparams += len(self.marker_columns)
+        elif params["feature_selector"] == "rf":
+            assert isinstance(params["feature_selector_nfeatures"], int)
+            nparams += params["feature_selector_nfeatures"]
+
+        if params["dist_preprocessor"] != "drop":
+            nparams += round(nsamples / 2)
+
+        if params["nonlinear_preprocessor"] != "drop":
+            assert isinstance(params["nonlinear_ncomponents"], int)
+            nparams += params["nonlinear_ncomponents"]
+
+        if params["grouping_preprocessor"] == "drop":
+            pass
+        elif params["grouping_preprocessor"] in ("passthrough", "onehot"):
+            nparams += len(self.grouping_columns)
+        elif params["grouping_preprocessor"] in ("factor", "pca"):
+            assert isinstance(params["grouping_ncomponents"], int)
+            nparams += params["grouping_ncomponents"]
+
+        if params["interactions"] == "poly":
+            assert isinstance(params["interactions_ncomponents"], int)
+            nparams += params["interactions_ncomponents"]
+
+        params["nparams"] = nparams
+        return params
+
+    def sample_preprocessing_model(self, params: Dict[str, Any]):
+        from sklearn.pipeline import Pipeline
+
+        from selectml.sk.compose import Aggregated
+        from selectml.sk.fixes.sklearn_coltransformer import (
+            MyColumnTransformer
+        )
+
+        from ..feature_selection import MAFSelector
+
+        target = self._sample_transformed_target_model(params)
+
+        marker = self._sample_marker_preprocessing_model(params)
+
+        feature_selection = self._sample_feature_selection_model(params)
+        dist = self._sample_dist_preprocessing_model(params)
+        nonlinear = self._sample_nonlinear_preprocessing_model(params)
+
+        def use_all_columns(X):
+            return np.repeat(True, X.shape[1])
+
+        transformers = [
+            ("feature_selection", feature_selection),
+            ("dist", dist),
+            ("nonlinear", nonlinear),
+        ]
+
+        transformers = MyColumnTransformer([
+            (k, v, use_all_columns) for k, v in transformers
+        ])
+
+        marker_pipeline = Pipeline([
+            (
+                "maf_filter",
+                MAFSelector(threshold=params["min_maf"], ploidy=self.ploidy)
+            ),
+            ("marker_scaler", marker),
+            ("transformers", transformers)
+        ])
+
+        grouping = self._sample_grouping_preprocessing_model(params)
+
+        if grouping is None:
+            grouping_trans = "drop"
+        elif isinstance(grouping, str):
+            grouping_trans = grouping
+        else:
+            grouping_trans = Aggregated(
+                grouping,
+                agg_train=True,
+                agg_test=False
+            )
+
+        n_markers = len(self.marker_columns)
+        n_groups = len(self.grouping_columns)
+        trans = [
+            (
+                "features",
+                MyColumnTransformer([
+                    (
+                        "grouping",
+                        grouping_trans,
+                        np.arange(0, n_groups)
+                    ),
+                    (
+                        "markers",
+                        Aggregated(
+                            marker_pipeline,
+                            agg_train=True,
+                            agg_test=False
+                        ),
+                        np.arange(n_groups, n_groups + n_markers)
+                    )
+                ])
+            )
+        ]
+
+        interactions = (
+            self._sample_interactions_preprocessing_model(params)
+        )
+
+        if interactions is None:
+            interactions = "drop"
+        elif interactions not in ("drop", "passthrough"):
+            interactions = Aggregated(interactions, agg_test=False)
+
+        trans.append(
+            (
+                "interactions",
+                MyColumnTransformer([
+                    ("features", "passthrough", use_all_columns),
+                    (
+                        "interactions",
+                        interactions,
+                        use_all_columns
+                    )
+                ]),
+            )
+        )
+
+        return target, Pipeline(trans)

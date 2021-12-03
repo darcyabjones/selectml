@@ -81,23 +81,35 @@ def cli(parser: argparse.ArgumentParser) -> None:
         help="The number CPUs to use."
     )
 
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="The random seed to use."
+    )
     return
 
 
 def runner(args: argparse.Namespace) -> None:
     import json
+    import numpy as np
     import pandas as pd
     import optuna
 
     model_cls = args.model.get_model()
     markers = pd.read_csv(args.markers, sep="\t")
     exp = pd.read_csv(args.experiment, sep="\t")
+
+    if args.seed is not None:
+        np.random.set_state(args.seed)
+
     model = model_cls(
         experiment=exp,
         markers=markers,
         response_columns=args.response,
         grouping_columns=args.groups,
         individual_columns=args.individuals,
+        seed=args.seed
     )
 
     study = optuna.create_study(direction="minimize")

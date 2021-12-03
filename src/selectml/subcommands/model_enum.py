@@ -15,7 +15,8 @@ from ..sk.optimise.models import (
     ElasticNetModel,
     ConvModel,
     MLPModel,
-    ConvMLPModel
+    ConvMLPModel,
+    BGLRModel
 )
 
 
@@ -32,6 +33,7 @@ class ModelOptimiser(enum.Enum):
     conv = 9
     mlp = 10
     convmlp = 11
+    bglr = 12
 
     def __str__(self) -> str:
         return self.name

@@ -184,7 +184,8 @@ class MultiSURF(SelectorMixin, BaseEstimator):
         sd: "Optional[float]" = None,
         batchsize: int = 200,
         nepoch: int = 1,
-        distance_metric: str = "euclidean"
+        distance_metric: str = "euclidean",
+        random_state: "Optional[int]" = None
     ):
         self.sd = sd
 
@@ -205,6 +206,8 @@ class MultiSURF(SelectorMixin, BaseEstimator):
         self.batchsize = batchsize
         assert nepoch > 0
         self.nepoch = nepoch
+
+        self.random_state = random_state
         return
 
     def _reset(self):
@@ -334,7 +337,7 @@ class MultiSURF(SelectorMixin, BaseEstimator):
         X_ = np.array(X)
         y_ = np.array(y)
 
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(seed=self.random_state)
         indices = np.arange(np.shape(X_)[0])
         nsplits = np.ceil(np.shape(X_)[0] / self.batchsize)
         for epoch in range(self.nepoch):

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     import optuna
 
 import numpy as np
-from .base import SKModel, TFBaseModel
+from .base import SKModel, TFBaseModel, BGLRBaseModel
 
 BaseTypes = Union[None, bool, str, int, float]
 
@@ -1389,6 +1389,8 @@ class ConvModel(TFBaseModel):
         from tensorflow.keras.regularizers import L1L2
         from tensorflow.keras.models import Sequential
 
+        import tensorflow as tf
+        tf.random.set_seed(self.seed)
         (
             target_trans,
             grouping_trans,
@@ -1756,6 +1758,8 @@ class MLPModel(TFBaseModel):
         )
         from tensorflow.keras.regularizers import L2, L1L2
         from tensorflow.keras.models import Sequential
+        import tensorflow as tf
+        tf.random.set_seed(self.seed)
 
         (
             target_trans,
@@ -2320,8 +2324,10 @@ class ConvMLPModel(TFBaseModel):
             BatchNormalization,
             ReLU
         )
+        from tensorflow import tf
         from tensorflow.keras.regularizers import L2, L1L2
         from tensorflow.keras.models import Sequential
+        tf.random.set_seed(self.seed)
 
         (
             target_trans,
@@ -2617,3 +2623,218 @@ class ConvMLPModel(TFBaseModel):
                 "env_embed_regularizer": "none",
             },
         ]
+
+
+class BGLRWrapper(object):
+
+    def __init__(
+        self,
+        marker_model,
+        grouping_model="FIXED",
+        interaction_model="BRR",
+        target_trans=None,
+        group_trans=None,
+        marker_trans=None,
+    ):
+        self.marker_model = marker_model
+        self.grouping_model = grouping_model
+        self.interaction_model = interaction_model
+        self.target_trans = target_trans
+        self.group_trans = group_trans
+        self.marker_trans = marker_trans
+        return
+
+    def fit(self, X, y, sample_weight=None, individuals=None, **kwargs):
+        X_markers_, X_grouping_ = X
+        X_markers = np.array(X_markers_)
+
+        if X_grouping_ is not None:
+            X_grouping = np.array(X_grouping_)
+        else:
+            X_grouping = None
+
+        del X_markers_, X_grouping_
+
+        y_ = np.array(y)
+        if len(y_.shape) == 1:
+            y_ = np.expand_dims(y_, -1)
+        elif len(y_.shape) > 2:
+            raise ValueError("We don't currently support multi-target")
+
+        self.markers = X_markers
+        self.individuals = individuals
+        self.groups = X_grouping
+        self.y = y_
+        return
+
+        return
+
+    def join_train_test(
+        self,
+        X: "Tuple[npt.ArrayLike, Optional[npt.ArrayLike]]"
+    ) -> "Tuple[Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]], np.ndarray]":  # noqa
+        assert hasattr(self, "y")
+
+        X_markers_, X_grouping_ = X
+        X_markers = np.array(X_markers_)
+        n_predict = X_markers.shape[0]
+        X_markers = np.concatenate([self.markers, X_markers])
+
+        if self.individuals is not None:
+            m = self.individuals.max() + 1
+            individuals = np.concatenate([
+                self.individuals,
+                np.arange(m, m + n_predict)
+            ])
+        else:
+            individuals = None
+
+        if X_grouping_ is not None:
+            X_grouping: Optional[np.ndarray] = np.array(X_grouping_)
+            X_grouping = np.concatenate([self.groups, X_grouping])
+        else:
+            assert self.groups is None
+            X_grouping = None
+        del X_markers_, X_grouping_
+
+        # Artificially create a censored dataset for the test samples.
+        y = np.concatenate([self.y, np.full(n_predict, np.nan)])
+        return (X_markers, X_grouping, individuals), y
+
+    def run_bglr(
+        self,
+        X: "Tuple[npt.ArrayLike, Optional[npt.ArrayLike], Optional[np.ArrayLike]]",  # noqa
+        y: "npt.ArrayLike"
+    ) -> "np.ndarray":
+        import rpy2.robjects as ro
+        from rpy2.robjects.packages import importr
+        from rpy2.robjects import numpy2ri
+
+        numpy2ri.activate()
+
+        X_markers_, X_grouping_, X_individuals_ = X
+        X_markers = np.array(X_markers_)
+
+        if X_grouping_ is not None:
+            X_grouping: Optional[np.ndarray] = np.array(X_grouping_)
+        else:
+            assert self.groups is None
+            X_grouping = None
+
+        if X_individuals_ is None:
+            individuals = np.range(X.shape[0])
+        else:
+            individuals = np.array(X_individuals_)
+
+        del X_markers_, X_grouping_, X_individuals_
+
+        if self.target_trans is not None:
+            y_ = self.target_trans.fit(
+                y,
+                individuals=individuals
+            )
+        else:
+            y_ = y
+
+        if (X_grouping is not None) and (self.group_trans is not None):
+            X_grouping = self.group_trans.fit(X_grouping)
+
+        if self.marker_trans is not None:
+            X_markers = self.marker_trans.fit(
+                X_markers,
+                y=y_,
+                individuals=individuals
+            )
+
+        BGLR = importr("BGLR")
+        ETA = []
+
+        if (
+            (self.marker_model == "RKHS") or
+            ((self.interaction_model != "none") and (X_grouping is not None))
+        ):
+            X_trans = (
+                (X_markers - X_markers.mean(axis=0)) / X_markers.std(axis=0)
+            )
+            X_trans = X_trans.dot(X_trans.T) / X_trans.shape[1]
+
+        if self.marker_model == "RKHS":
+            ETA.append(
+                ro.ListVector({"K": X_trans, "model": self.marker_model})
+            )
+        else:
+            ETA.append(
+                ro.ListVector({"X": X_markers, "model": self.marker_model})
+            )
+
+        if X_grouping is not None:
+            ETA.append(ro.ListVector({
+                "X": X_grouping,
+                "model": self.grouping_model
+            }))
+
+        if (X_grouping is not None) and (self.interaction_model != "none"):
+            ETA.append(ro.ListVector({
+                "K": X_grouping.dot(X_grouping.T) * X_trans,
+                "model": self.interaction_model
+            }))
+
+        results = BGLR.BGLR(
+            y=y_,
+            ETA=ETA,
+            nIter=10000,
+            burnIn=1000,
+            response_type="continuous",
+            verbose=False
+        )
+
+        preds = BGLR.predict_BGLR(results)
+
+        if len(preds.shape) == 1:
+            preds = np.expand_dims(preds, -1)
+
+        if self.target_trans is not None:
+            preds = self.target_trans.inverse_transform(
+                preds,
+            )
+
+        numpy2ri.deactivate()
+        return preds
+
+    def predict_all(self, X: "Tuple[npt.ArrayLike, Optional[npt.ArrayLike]]"):
+        (X_markers, X_grouping, individuals), y = self.join_train_test(X)
+        preds = self.run_bglr((X_markers, X_grouping, individuals), y)
+        return preds
+
+    def predict(self, X: "Tuple[npt.ArrayLike, Optional[npt.ArrayLike]]"):
+        X_markers_, X_grouping_ = X
+        n_predict = np.array(X_markers_).shape[0]
+
+        (X_markers, X_grouping, individuals), y = self.join_train_test(X)
+        preds = self.run_bglr((X_markers, X_grouping, individuals), y)
+        return preds[-n_predict:]
+
+
+class BGLRModel(BGLRBaseModel):
+
+    use_weights: bool = False
+
+    def sample_params(self, trial: "optuna.Trial") -> Dict[str, Any]:
+        params = {
+            "marker_model": trial.suggest_categorical(
+                "marker_model",
+                ["BRR", "BayesA", "BayesB", "BayesC", "BL", "RKHS"]
+            )
+        }
+        if len(self.grouping_columns) > 0:
+            params.update({
+                "grouping_model": trial.suggest_categorical(
+                    "grouping_model",
+                    ["FIXED", "BRR", "BayesA", "BayesB", "BayesC", "BL"]
+                ),
+                "interaction_model": trial.suggest_categorical(
+                    "interaction_model",
+                    ["none", "BRR", "BayesA", "BayesB", "BayesC", "BL", "RHKS"]
+                )
+            })
+        return params
