@@ -2629,19 +2629,25 @@ class BGLRWrapper(object):
 
     def __init__(
         self,
-        marker_model,
+        fs_model,
+        add_trans,
+        marker_model="BRR",
         grouping_model="FIXED",
-        interaction_model="BRR",
+        interaction_model="RKHS",
         target_trans=None,
         group_trans=None,
-        marker_trans=None,
+        dom_trans=None,
+        epi_trans=None,
     ):
+        self.fs_model = fs_model
         self.marker_model = marker_model
         self.grouping_model = grouping_model
         self.interaction_model = interaction_model
         self.target_trans = target_trans
         self.group_trans = group_trans
-        self.marker_trans = marker_trans
+        self.add_trans = add_trans
+        self.dom_trans = dom_trans
+        self.epi_trans = epi_trans
         return
 
     def fit(self, X, y, sample_weight=None, individuals=None, **kwargs):
@@ -2667,8 +2673,6 @@ class BGLRWrapper(object):
         self.y = y_
         return
 
-        return
-
     def join_train_test(
         self,
         X: "Tuple[npt.ArrayLike, Optional[npt.ArrayLike]]"
@@ -2681,7 +2685,7 @@ class BGLRWrapper(object):
         X_markers = np.concatenate([self.markers, X_markers])
 
         if self.individuals is not None:
-            m = self.individuals.max() + 1
+            m = len(self.individuals) + 1
             individuals = np.concatenate([
                 self.individuals,
                 np.arange(m, m + n_predict)
@@ -2698,10 +2702,13 @@ class BGLRWrapper(object):
         del X_markers_, X_grouping_
 
         # Artificially create a censored dataset for the test samples.
-        y = np.concatenate([self.y, np.full(n_predict, np.nan)])
+        y = np.concatenate([
+            self.y,
+            np.expand_dims(np.full(n_predict, np.nan), -1)
+        ])
         return (X_markers, X_grouping, individuals), y
 
-    def run_bglr(
+    def run_bglr(  # noqa
         self,
         X: "Tuple[npt.ArrayLike, Optional[npt.ArrayLike], Optional[np.ArrayLike]]",  # noqa
         y: "npt.ArrayLike"
@@ -2714,6 +2721,9 @@ class BGLRWrapper(object):
 
         X_markers_, X_grouping_, X_individuals_ = X
         X_markers = np.array(X_markers_)
+
+        if self.fs_model is not None:
+            X_markers = self.fs_model.fit_transform(X_markers)
 
         if X_grouping_ is not None:
             X_grouping: Optional[np.ndarray] = np.array(X_grouping_)
@@ -2729,42 +2739,51 @@ class BGLRWrapper(object):
         del X_markers_, X_grouping_, X_individuals_
 
         if self.target_trans is not None:
-            y_ = self.target_trans.fit(
+            y_ = self.target_trans.fit_transform(
                 y,
-                individuals=individuals
             )
         else:
             y_ = y
 
         if (X_grouping is not None) and (self.group_trans is not None):
-            X_grouping = self.group_trans.fit(X_grouping)
-
-        if self.marker_trans is not None:
-            X_markers = self.marker_trans.fit(
-                X_markers,
-                y=y_,
-                individuals=individuals
-            )
+            X_grouping = self.group_trans.fit_transform(X_grouping)
 
         BGLR = importr("BGLR")
         ETA = []
 
-        if (
-            (self.marker_model == "RKHS") or
-            ((self.interaction_model != "none") and (X_grouping is not None))
-        ):
-            X_trans = (
-                (X_markers - X_markers.mean(axis=0)) / X_markers.std(axis=0)
-            )
-            X_trans = X_trans.dot(X_trans.T) / X_trans.shape[1]
+        X_markers = self.add_trans.fit_transform(
+            X_markers,
+            y=y_,
+            individuals=individuals
+        )
 
         if self.marker_model == "RKHS":
             ETA.append(
-                ro.ListVector({"K": X_trans, "model": self.marker_model})
+                ro.ListVector({"K": X_markers, "model": self.marker_model})
             )
         else:
             ETA.append(
                 ro.ListVector({"X": X_markers, "model": self.marker_model})
+            )
+
+        if self.dom_trans is not None:
+            X_dom = self.dom_trans.fit_transform(
+                X_markers,
+                y=y_,
+                individuals=individuals
+            )
+            ETA.append(
+                ro.ListVector({"K": X_dom, "model": "RKHS"})
+            )
+
+        if self.epi_trans is not None:
+            X_epi = self.epi_trans.fit_transform(
+                X_markers,
+                y=y_,
+                individuals=individuals
+            )
+            ETA.append(
+                ro.ListVector({"K": X_epi, "model": "RKHS"})
             )
 
         if X_grouping is not None:
@@ -2774,6 +2793,10 @@ class BGLRWrapper(object):
             }))
 
         if (X_grouping is not None) and (self.interaction_model != "none"):
+            X_trans = (
+                (X_markers - X_markers.mean(axis=0)) / X_markers.std(axis=0)
+            )
+            X_trans = X_trans.dot(X_trans.T) / X_trans.shape[1]
             ETA.append(ro.ListVector({
                 "K": X_grouping.dot(X_grouping.T) * X_trans,
                 "model": self.interaction_model
@@ -2820,12 +2843,25 @@ class BGLRModel(BGLRBaseModel):
     use_weights: bool = False
 
     def sample_params(self, trial: "optuna.Trial") -> Dict[str, Any]:
-        params = {
-            "marker_model": trial.suggest_categorical(
+        params = self.sample_preprocessing_params(
+            trial,
+            target_options=["stdnorm", "quantile"],
+            marker_options=["maf", "noia_add"],
+            feature_selection_options=["passthrough", "relief"],
+            grouping_options=["onehot"],
+        )
+
+        if params["marker_preprocessor"] == "noia_add":
+            params["marker_model"] = trial.suggest_categorical(
+                "marker_model",
+                ["RKHS"]
+            )
+        else:
+            params["marker_model"] = trial.suggest_categorical(
                 "marker_model",
                 ["BRR", "BayesA", "BayesB", "BayesC", "BL", "RKHS"]
             )
-        }
+
         if len(self.grouping_columns) > 0:
             params.update({
                 "grouping_model": trial.suggest_categorical(
@@ -2834,7 +2870,31 @@ class BGLRModel(BGLRBaseModel):
                 ),
                 "interaction_model": trial.suggest_categorical(
                     "interaction_model",
-                    ["none", "BRR", "BayesA", "BayesB", "BayesC", "BL", "RHKS"]
+                    ["none", "RHKS"]
                 )
             })
         return params
+
+    def model(self, params: Dict[str, Any]):
+        (
+            target_trans,
+            feature_selector,
+            gmarkers,
+            dmarkers,
+            emarkers,
+            grouping
+        ) = self.sample_preprocessing_model(params)
+
+        return BGLRWrapper(
+            fs_model=feature_selector,
+            add_trans=gmarkers,
+            grouping_model=params["grouping_model"],
+            interaction_model=params["interaction_model"],
+            target_trans=target_trans,
+            group_trans=grouping,
+            dom_trans=dmarkers,
+            epi_trans=emarkers
+        )
+
+    def starting_points(self) -> List[Dict[str, BaseTypes]]:
+        return []

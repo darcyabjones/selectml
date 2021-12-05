@@ -60,5 +60,6 @@ NAME_TO_MODEL = {
     ModelOptimiser.elasticnet: ElasticNetModel,
     ModelOptimiser.conv: ConvModel,
     ModelOptimiser.mlp: MLPModel,
-    ModelOptimiser.convmlp: ConvMLPModel
+    ModelOptimiser.convmlp: ConvMLPModel,
+    ModelOptimiser.bglr: BGLRModel,
 }
