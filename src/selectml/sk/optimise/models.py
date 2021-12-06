@@ -114,7 +114,7 @@ class XGBModel(SKModel):
                 random_state=self.seed,
                 max_depth=params["max_depth"],
                 learning_rate=params["learning_rate"],
-                n_jobs=1,
+                n_jobs=-1,
                 verbosity=0,
             ))
         ])
@@ -180,7 +180,7 @@ class KNNModel(SKModel):
             marker_options=["maf"],
             dist_options=["vanraden"],
             nonlinear_options=["drop", "rbf", "laplacian", "poly"],
-            feature_selection_options=["passthrough", "rf", "relief"],
+            feature_selection_options=["drop", "passthrough", "rf", "relief"],
             grouping_options=["onehot"],
             grouping_interaction_options=["drop", "poly"],
         )
@@ -213,7 +213,7 @@ class KNNModel(SKModel):
                 leaf_size=params["leaf_size"],
                 algorithm=params["algorithm"],
                 p=params["p"],
-                n_jobs=1
+                n_jobs=-1
             ))
         ])
 
@@ -2849,10 +2849,7 @@ class BGLRModel(BGLRBaseModel):
         )
 
         if params["marker_preprocessor"] == "noia_add":
-            params["marker_model"] = trial.suggest_categorical(
-                "marker_model",
-                ["RKHS"]
-            )
+            params["marker_model"] = "RKHS"
         else:
             params["marker_model"] = trial.suggest_categorical(
                 "marker_model",

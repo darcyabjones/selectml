@@ -1305,8 +1305,11 @@ class SKModel(OptimiseModel):
         elif params["feature_selector"] == "passthrough":
             nparams += len(self.marker_columns)
         elif params["feature_selector"] == "rf":
-            assert isinstance(params["feature_selector_nfeatures"], int)
-            nparams += params["feature_selector_nfeatures"]
+            assert isinstance(params["feature_selection_nfeatures"], int)
+            nparams += params["feature_selection_nfeatures"]
+        elif params["feature_selector"] == "relief":
+            assert isinstance(params["feature_selection_nfeatures"], int)
+            nparams += params["feature_selection_nfeatures"]
 
         if params["dist_preprocessor"] != "drop":
             nparams += round(nsamples / 2)
@@ -2182,8 +2185,11 @@ class BGLRBaseModel(OptimiseModel):
         elif params["feature_selector"] == "passthrough":
             nparams += len(self.marker_columns)
         elif params["feature_selector"] == "rf":
-            assert isinstance(params["feature_selector_nfeatures"], int)
-            nparams += params["feature_selector_nfeatures"]
+            assert isinstance(params["feature_selection_nfeatures"], int)
+            nparams += params["feature_selection_nfeatures"]
+        elif params["feature_selector"] == "relief":
+            assert isinstance(params["feature_selection_nfeatures"], int)
+            nparams += params["feature_selection_nfeatures"]
 
         if params["grouping_preprocessor"] == "drop":
             pass

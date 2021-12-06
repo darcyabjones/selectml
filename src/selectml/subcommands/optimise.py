@@ -61,6 +61,13 @@ def cli(parser: argparse.ArgumentParser) -> None:
     )
 
     parser.add_argument(
+        "--importances",
+        type=argparse.FileType('w'),
+        default=None,
+        help="Where to write the output to. Default: stdout"
+    )
+
+    parser.add_argument(
         "-b", "--best",
         type=argparse.FileType("w"),
         default=None,
@@ -96,6 +103,8 @@ def runner(args: argparse.Namespace) -> None:
     import pandas as pd
     import optuna
 
+    optuna.logging.set_verbosity(optuna.logging.INFO)
+    optuna.logging.enable_default_handler()
     model_cls = args.model.get_model()
     markers = pd.read_csv(args.markers, sep="\t")
     exp = pd.read_csv(args.experiment, sep="\t")
@@ -117,7 +126,7 @@ def runner(args: argparse.Namespace) -> None:
         study.enqueue_trial(trial)
 
     # Timeout after 6 hours
-    study.optimize(model, timeout=6 * 60 * 60, n_trials=args.ntrials, n_jobs=args.cpu)
+    study.optimize(model, timeout=6 * 60 * 60, n_trials=args.ntrials, n_jobs=args.cpu, gc_after_trial=True, catch=(MemoryError, OSError))
 
     trial_df = study.trials_dataframe()
     trial_df.to_csv(args.outfile, sep="\t")
@@ -125,5 +134,9 @@ def runner(args: argparse.Namespace) -> None:
     if args.best is not None:
         best = study.best_params
         json.dump(best, args.best)
+
+    if args.importance is not None:
+        importance = optuna.importance.get_param_importances(study)
+        json.dump(importance, args.importance)
 
     return
