@@ -116,7 +116,8 @@ def runner(args: argparse.Namespace) -> None:
     for trial in model.starting_points():
         study.enqueue_trial(trial)
 
-    study.optimize(model, n_trials=args.ntrials)
+    # Timeout after 6 hours
+    study.optimize(model, timeout=6 * 60 * 60, n_trials=args.ntrials, n_jobs=args.cpu)
 
     trial_df = study.trials_dataframe()
     trial_df.to_csv(args.outfile, sep="\t")

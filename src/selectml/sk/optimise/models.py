@@ -325,7 +325,7 @@ class RFModel(SKModel):
                 min_impurity_decrease=params["min_impurity_decrease"],
                 bootstrap=params["bootstrap"],
                 oob_score=oob_score,
-                n_jobs=1,
+                n_jobs=-1,
                 random_state=self.seed
             ))
         ])
@@ -424,7 +424,7 @@ class ExtraTreesModel(SKModel):
                 min_impurity_decrease=params["min_impurity_decrease"],
                 bootstrap=params["bootstrap"],
                 oob_score=oob_score,
-                n_jobs=1,
+                n_jobs=-1,
                 random_state=self.seed
             ))
         ])
@@ -2723,7 +2723,7 @@ class BGLRWrapper(object):
         X_markers = np.array(X_markers_)
 
         if self.fs_model is not None:
-            X_markers = self.fs_model.fit_transform(X_markers)
+            X_markers = self.fs_model.fit_transform(X_markers, y)
 
         if X_grouping_ is not None:
             X_grouping: Optional[np.ndarray] = np.array(X_grouping_)
@@ -2754,7 +2754,6 @@ class BGLRWrapper(object):
         X_markers = self.add_trans.fit_transform(
             X_markers,
             y=y_,
-            individuals=individuals
         )
 
         if self.marker_model == "RKHS":
@@ -2770,7 +2769,6 @@ class BGLRWrapper(object):
             X_dom = self.dom_trans.fit_transform(
                 X_markers,
                 y=y_,
-                individuals=individuals
             )
             ETA.append(
                 ro.ListVector({"K": X_dom, "model": "RKHS"})
@@ -2780,7 +2778,6 @@ class BGLRWrapper(object):
             X_epi = self.epi_trans.fit_transform(
                 X_markers,
                 y=y_,
-                individuals=individuals
             )
             ETA.append(
                 ro.ListVector({"K": X_epi, "model": "RKHS"})
