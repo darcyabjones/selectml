@@ -332,6 +332,7 @@ class MyColumnTransformer(ColumnTransformer):
         }
 
         valid_steps = {n for n, _, _ in self.transformers}
+        print(fit_params)
         for pname, pval in fit_params.items():
             if '__' not in pname:
                 raise ValueError(

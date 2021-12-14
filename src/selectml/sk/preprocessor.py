@@ -460,9 +460,9 @@ class NOIAAdditiveScaler(TransformerMixin, BaseEstimator):
 
     def __init__(
         self,
-        AA: int = 2,
-        Aa: int = 1,
-        aa: int = 0,
+        AA: float = 2,
+        Aa: float = 1,
+        aa: float = 0,
         copy: bool = True
     ):
         self.AA = AA

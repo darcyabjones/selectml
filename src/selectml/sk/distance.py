@@ -637,9 +637,9 @@ class NOIAAdditiveKernel(TransformerMixin, BaseEstimator):
 
     def __init__(
         self,
-        AA: float = 2,
-        Aa: float = 1,
-        aa: float = 0,
+        AA: float = 2.,
+        Aa: float = 1.,
+        aa: float = 0.,
         copy: bool = True
     ):
         from .preprocessor import NOIAAdditiveScaler

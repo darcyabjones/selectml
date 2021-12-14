@@ -363,3 +363,160 @@ class MultiSURF(SelectorMixin, BaseEstimator):
             assert self.threshold is not None
             mask = self.relevance_ > self.threshold
             return mask
+
+
+class GEMMASelector(SelectorMixin, BaseEstimator):
+
+    """ Filter markers using the GEMMA GWAS p-values.
+
+    Examples:
+
+    >>> import numpy as np
+    >>> from selectml.sk.feature_selection import GEMMASelector
+    >>> from selectml.data import basic
+    >>> X, y, _ = basic()
+    >>> y = np.expand_dims(y, -1)
+    >>> X = X[::5]
+    >>> y = y[::5]
+    >>> ms = GEMMASelector(n=5)
+    >>> ms.fit_transform(X, y)
+    array([[1., 1., 1., 0., 1.],
+           [2., 0., 2., 2., 2.],
+           [2., 2., 2., 2., 0.],
+           [0., 1., 1., 0., 1.],
+           [2., 0., 0., 1., 0.]])
+    >>> ms.pvalues_
+    array([ 8.81620816e-39, -1.76324163e-38,  2.93873605e-39, -2.93873605e-39,
+            1.17549442e-38,  1.17549442e-38, -8.81620816e-39,  1.17549442e-38,
+            5.87747210e-39,  2.93873605e-39])
+    >>> ms.coefs_
+    array([ 8.81620816e-39, -1.76324163e-38,  2.93873605e-39, -2.93873605e-39,
+            1.17549442e-38,  1.17549442e-38, -8.81620816e-39,  1.17549442e-38,
+            5.87747210e-39,  2.93873605e-39])
+    >>> ms._get_support_mask()
+    array([ True, False, False, False,  True,  True, False,  True,  True,
+           False])
+    """
+
+    requires_y: bool = True
+
+    def __init__(
+        self,
+        threshold: "Optional[float]" = None,
+        n: "Optional[int]" = None,
+    ):
+        if (threshold is not None) and (n is not None):
+            raise ValueError(
+                "Please select a value for threshold or n, "
+                "but not both."
+            )
+        elif (threshold is None) and (n is None):
+            threshold = 0.1
+
+        self.threshold = threshold
+        self.n = n
+        return
+
+    def _reset(self):
+        if hasattr(self, "n_samples_seen_"):
+            del self.n_samples_seen_
+            del self.n_features_in_
+            del self.n_features_
+            del self.pvalues_
+            del self.coefs_
+            del self.coefs_se_
+
+    def partial_fit(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]",
+        covariates: "Optional[npt.ArrayLike]" = None,
+        **kwargs
+    ) -> "GEMMASelector":
+        import pandas as pd
+        from ..gemma import GEMMA
+        first_pass: bool = not hasattr(self, "n_samples_seen_")
+        assert y is not None
+
+        X_: np.ndarray = check_array(
+            X,
+            accept_sparse=False,
+            accept_large_sparse=False,
+            dtype="numeric",
+            force_all_finite="allow-nan",
+            estimator=self
+        )
+
+        y_: np.ndarray = check_array(
+            y,
+            accept_sparse=False,
+            accept_large_sparse=False,
+            dtype="numeric",
+            force_all_finite="allow-nan",
+            estimator=self
+        )
+
+        if covariates is not None:
+            cov: np.ndarray = check_array(
+                covariates,
+                accept_sparse=False,
+                accept_large_sparse=False,
+                dtype="numeric",
+                force_all_finite="allow-nan",
+                estimator=self
+            )
+        else:
+            cov = None
+
+        if first_pass:
+            self.n_samples_seen_: int = X_.shape[0]
+            self.n_features_in_ = X_.shape[1]
+            self.n_features_ = self.n_features_in_
+        else:
+            assert X_.shape[1] == self.n_features_in_, \
+                "Must have same number of features"
+
+        g = GEMMA()
+        results = g.get_assocs(X_, y_, cov)
+        results = results[["rs", "beta", "se", "p_wald"]]
+
+        X_cols = set(np.arange(X_.shape[1]))
+        X_cols = X_cols.difference(results["rs"])
+        remaining = pd.DataFrame({
+            "rs": list(X_cols),
+            "beta": 0.0,
+            "se": 0.0,
+            "p_wald": 1.0
+        })
+
+        results = pd.concat([results, remaining], axis=0, ignore_index=True)
+        del remaining
+        del X_cols
+
+        results.sort_values("rs", inplace=True)
+        self.pvalues_ = results.loc[:, "p_wald"].values
+        self.coefs_ = results.loc[:, "beta"].values
+        self.coefs_se_ = results.loc[:, "se"].values
+        return self
+
+    def fit(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None,
+        covariates: "Optional[npt.ArrayLike]" = None,
+        **kwargs
+    ) -> "GEMMASelector":
+        self._reset()
+        assert y is not None
+        return self.partial_fit(X, y, covariates, **kwargs)
+
+    def _get_support_mask(self) -> "np.ndarray":
+        if self.n is not None:
+            sorted_ = np.argsort(self.pvalues_)[:self.n]
+            out = np.full(self.pvalues_.shape, False)
+            out[sorted_] = True
+            return out
+        else:
+            assert self.threshold is not None
+            mask = self.pvalues_ < self.threshold
+            return mask

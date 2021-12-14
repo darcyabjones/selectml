@@ -6,8 +6,7 @@ import numpy as np
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from typing import Sequence, Union, Optional
-    from typing import List, Tuple
+    from typing import Optional
     from typing import Callable
     import numpy.typing as npt
 
@@ -17,7 +16,6 @@ if TYPE_CHECKING:
             "npt.ArrayLike",
             "npt.ArrayLike",
             "Optional[npt.ArrayLike]",
-            bool
         ],
         np.ndarray
     ]
@@ -27,7 +25,6 @@ def variance_weights(
     X: "npt.ArrayLike",
     y: "npt.ArrayLike",
     grouping: "Optional[npt.ArrayLike]" = None,
-    means: bool = False
 ) -> np.ndarray:
     """ Compute weights by reciprocal variance of the y-values within
     groupings.
@@ -39,7 +36,7 @@ def variance_weights(
     >>> from selectml.sk.weighting import variance_weights
     >>> from selectml.data import basic
     >>> X, y, indivs = basic()
-    >>> variance_weights(X, y, indivs)
+    >>> variance_weights(X, y, grouping=indivs)
     array([0.44702982, 0.44702982, 0.44702982, 0.44702982, 0.44702982,
            0.11108895, 0.11108895, 0.11108895, 0.11108895, 0.11108895,
            0.57986478, 0.57986478, 0.57986478, 0.57986478, 0.57986478,
@@ -61,12 +58,7 @@ def variance_weights(
     df["groups"] = grouping_
     x = df.groupby("groups")[ycols].var().mean(axis=1)
 
-    if not means:
-        x = x.loc[df["groups"]]
-
     counts = df.groupby("groups")[ycols[0]].count()
-    if not means:
-        counts = counts.loc[df["groups"]]
 
     out = 1 / (x * counts)
     return out.values
@@ -76,7 +68,6 @@ def distance_weights(
     X: "npt.ArrayLike",
     y: "npt.ArrayLike",
     grouping: "Optional[npt.ArrayLike]" = None,
-    means: bool = False
 ) -> np.ndarray:
     """ Compute weights based on Manhattan distance of the X-values.
 
@@ -87,19 +78,13 @@ def distance_weights(
     >>> from selectml.sk.weighting import distance_weights
     >>> from selectml.data import basic
     >>> X, y, indivs = basic()
-    >>> distance_weights(X, y, indivs)
+    >>> distance_weights(X, y)
     array([41., 41., 41., 41., 41., 40., 40., 40., 40., 40., 40., 40., 40.,
            40., 40., 36., 36., 36., 36., 36., 35., 35., 35., 35., 35.])
     """
     from scipy.spatial.distance import pdist, squareform
 
     X_ = np.array(X)
-
-    if grouping is None:
-        grouping_ = np.arange(X_.shape[0])
-    else:
-        grouping_ = np.array(grouping)
-
     x = pd.DataFrame({
         "index": np.arange(X_.shape[0]),
         "genotypes": np.apply_along_axis(
@@ -131,12 +116,6 @@ def distance_weights(
     ).set_index("index", drop=True)
 
     corr = corr.loc[np.arange(X_.shape[0])].sum(axis=1)
-
-    if not means:
-        return corr.values
-
-    # Pandas can't do multiindex selection, so just cat groups all together.
-    corr = corr.groupby(grouping_).mean()
     return corr.values
 
 
@@ -144,7 +123,6 @@ def cluster_weights(
     X: "npt.ArrayLike",
     y: "npt.ArrayLike",
     grouping: "Optional[npt.ArrayLike]" = None,
-    means: bool = False
 ) -> np.ndarray:
     """ Compute clusters on the X values based on Manhattan distance, then
     weight by cluster size.
@@ -157,7 +135,7 @@ def cluster_weights(
     >>> from selectml.sk.weighting import cluster_weights
     >>> from selectml.data import basic
     >>> X, y, indivs = basic()
-    >>> cluster_weights(X, y, indivs)
+    >>> cluster_weights(X, y)
     array([4., 4., 4., 4., 4., 4., 4., 4., 4., 4., 4., 4., 4., 4., 4., 4., 4.,
            4., 4., 4., 4., 4., 4., 4., 4.])
     """
@@ -168,11 +146,6 @@ def cluster_weights(
     from scipy.spatial.distance import pdist, squareform
 
     X_ = np.array(X)
-
-    if grouping is None:
-        grouping_ = np.arange(X_.shape[0])
-    else:
-        grouping_ = np.array(grouping)
 
     x = pd.DataFrame({
         "index": np.arange(X_.shape[0]),
@@ -219,8 +192,4 @@ def cluster_weights(
     ).set_index("index")
     clusters = clusters.loc[np.arange(X_.shape[0]), "weight"]
 
-    if not means:
-        return clusters.values
-
-    clusters = clusters.groupby(grouping_).mean()
     return clusters.values

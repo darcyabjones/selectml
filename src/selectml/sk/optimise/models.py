@@ -2710,7 +2710,7 @@ class BGLRWrapper(object):
 
     def run_bglr(  # noqa
         self,
-        X: "Tuple[npt.ArrayLike, Optional[npt.ArrayLike], Optional[np.ArrayLike]]",  # noqa
+        X: "Tuple[npt.ArrayLike, Optional[npt.ArrayLike], Optional[npt.ArrayLike]]",  # noqa
         y: "npt.ArrayLike"
     ) -> "np.ndarray":
         import rpy2.robjects as ro
@@ -2731,10 +2731,10 @@ class BGLRWrapper(object):
             assert self.groups is None
             X_grouping = None
 
-        if X_individuals_ is None:
-            individuals = np.range(X.shape[0])
-        else:
-            individuals = np.array(X_individuals_)
+        # if X_individuals_ is None:
+        #     individuals = np.arange(X.shape[0])
+        # else:
+        #     individuals = np.array(X_individuals_)
 
         del X_markers_, X_grouping_, X_individuals_
 

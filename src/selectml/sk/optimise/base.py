@@ -41,6 +41,7 @@ class OptimiseModel(object):
         stat: str = "mae",
         seed: Optional[int] = None,
         model_name: str = "test",
+        cv_factor: Optional[str] = "indiv",
         ploidy: int = 2
     ):
         self.experiment: pd.DataFrame = experiment
@@ -74,6 +75,7 @@ class OptimiseModel(object):
         self.seed = seed
         self.model_name: str = model_name
         self.ploidy: int = ploidy
+        self.cv_factor: Optional[str] = cv_factor
         return
 
     @classmethod
@@ -81,8 +83,6 @@ class OptimiseModel(object):
         cls,
         y: "npt.ArrayLike",
         preds: "npt.ArrayLike",
-        y_means: "npt.ArrayLike",
-        means_preds: "npt.ArrayLike",
     ) -> Dict[str, float]:
         from sklearn.metrics import (
             mean_squared_error,
@@ -100,59 +100,24 @@ class OptimiseModel(object):
 
         results = {
             "mae": mean_absolute_error(y, preds),
-            "mae_means": mean_absolute_error(
-                y_means,
-                means_preds
-            ),
             "median_ae": median_absolute_error(y, preds),
-            "median_ae_means": median_absolute_error(
-                y_means,
-                means_preds
-            ),
             "mse": mean_squared_error(y, preds),
-            "mse_means": mean_squared_error(
-                y_means,
-                means_preds
-            ),
             "pearsons": pearsons_correlation(y, preds),
-            "pearsons_means": pearsons_correlation(
-                y_means,
-                means_preds
-            ),
             "spearmans": spearmans_correlation(y, preds),
-            "spearmans_means": spearmans_correlation(
-                y_means,
-                means_preds
-            ),
             "tau": tau_correlation(y, preds),
-            "tau_means": tau_correlation(
-                y_means,
-                means_preds
-            ),
             "explained_variance": explained_variance_score(
                 y,
                 preds
             ),
-            "explained_variance_means": explained_variance_score(
-                y_means,
-                means_preds
-            ),
             "r2": r2_score(y, preds),
-            "r2_means": r2_score(y_means, means_preds),
         }
 
         return results
 
-    def cv(self, k: int = 5) -> Iterator[Tuple[
-        int,
-        "npt.ArrayLike",
-        "npt.ArrayLike",
-        "npt.ArrayLike",
-        "npt.ArrayLike",
-        "npt.ArrayLike",
-        "npt.ArrayLike",
-        "npt.ArrayLike",
-        "npt.ArrayLike",
+    def cv(
+        self,
+        k: int = 5
+    ) -> Iterator[Tuple[
         "npt.ArrayLike",
         "npt.ArrayLike",
         "npt.ArrayLike",
@@ -162,7 +127,11 @@ class OptimiseModel(object):
         "npt.ArrayLike",
         "npt.ArrayLike",
     ]]:
-        from sklearn.model_selection import GroupKFold
+        from sklearn.model_selection import GroupKFold, KFold
+
+        if self.cv_factor is not None:
+            assert self.cv_factor in ("indiv", "indiv_grouping")
+            grp_factor = f"_{self.cv_factor}_"
 
         if self.seed is not None:
             np.random.seed(self.seed)
@@ -185,40 +154,20 @@ class OptimiseModel(object):
             .values
         )
 
-        for i, (train_idx, test_idx) in enumerate(
-            GroupKFold(k)
-            .split(
+        if grp_factor is None:
+            splitter = KFold(k, shuffle=True).split(data)
+        else:
+            splitter = GroupKFold(k).split(
                 data,
-                groups=data["_indiv_"].values,
+                groups=data[grp_factor].values,
             )
-        ):
+
+        for i, (train_idx, test_idx) in enumerate(splitter):
             train = data.iloc[train_idx]
             X_train = train.loc[:, self.grouping_columns + self.marker_columns]
             y_train = train.loc[:, self.response_columns]
             indiv_train = train.loc[:, "_indiv_"]
             grouping_train = train.loc[:, "_indiv_grouping_"]
-
-            X_train_means = (
-                train
-                .groupby("_indiv_grouping_")
-                [self.grouping_columns + self.marker_columns]
-                .mean()
-            )
-            y_train_means = (
-                train
-                .groupby("_indiv_grouping_")
-                [self.response_columns]
-                .mean()
-                .loc[X_train_means.index.values, ]
-            )
-            indiv_train_means = (
-                train
-                .groupby("_indiv_grouping_")
-                ["_indiv_"]
-                .first()
-                .loc[X_train_means.index.values, ]
-            )
-            grouping_train_means = X_train_means.index.values
 
             test = data.iloc[test_idx]
             X_test = test.loc[:, self.grouping_columns + self.marker_columns]
@@ -226,46 +175,15 @@ class OptimiseModel(object):
             indiv_test = test.loc[:, "_indiv_"]
             grouping_test = test.loc[:, "_indiv_grouping_"]
 
-            X_test_means = (
-                test
-                .groupby("_indiv_grouping_")
-                [self.grouping_columns + self.marker_columns]
-                .mean()
-            )
-            y_test_means = (
-                test
-                .groupby("_indiv_grouping_")
-                [self.response_columns]
-                .mean()
-                .loc[X_test_means.index.values, ]
-            )
-            indiv_test_means = (
-                test
-                .groupby("_indiv_grouping_")
-                ["_indiv_"]
-                .first()
-                .loc[X_test_means.index.values, ]
-            )
-            grouping_test_means = X_test_means.index.values
-
             yield (
-                i,
                 X_train.values,
                 y_train.values,
                 indiv_train.values,
                 grouping_train.values,
-                X_train_means.values,
-                y_train_means.values,
-                indiv_train_means.values,
-                grouping_train_means,
                 X_test.values,
                 y_test.values,
                 indiv_test.values,
-                grouping_test.values,
-                X_test_means.values,
-                y_test_means.values,
-                indiv_test_means.values,
-                grouping_test_means
+                grouping_test.values
             )
         return
 
@@ -281,25 +199,16 @@ class OptimiseModel(object):
         out = []
         weight_fn = WEIGHT_FNS[params.get("weight", "none")]
 
-        for (
-            i,
+        for i, (
             X_train,
             y_train,
             indiv_train,
             grouping_train,
-            X_train_means,
-            y_train_means,
-            indiv_train_means,
-            grouping_train_means,
             X_test,
             y_test,
             indiv_test,
             grouping_test,
-            X_test_means,
-            y_test_means,
-            indiv_test_means,
-            grouping_test_means
-        ) in self.cv(k):
+        ) in enumerate(self.cv(k)):
 
             if weight_fn is None:
                 weights = None
@@ -307,20 +216,13 @@ class OptimiseModel(object):
                 weights = weight_fn(
                     X_train,
                     y_train,
-                    grouping_train,
-                    params["train_means"]
+                    indiv_train,
                 )
 
-            if params["train_means"]:
-                X = X_train_means
-                y = y_train_means
-                indiv_fit = indiv_train_means
-                grouping_fit = grouping_train_means
-            else:
-                X = X_train
-                y = y_train
-                indiv_fit = indiv_train
-                grouping_fit = grouping_train
+            X = X_train
+            y = y_train
+            indiv_fit = indiv_train
+            grouping_fit = grouping_train
 
             params["nsamples"] = len(np.unique(indiv_train))
 
@@ -335,15 +237,11 @@ class OptimiseModel(object):
             )
 
             train_preds = self.predict(model, X_train)
-            train_means_preds = self.predict(model, X_train_means)
             test_preds = self.predict(model, X_test)
-            test_means_preds = self.predict(model, X_test_means)
 
             train_stats = self.regression_stats(
                 y_train,
                 train_preds,
-                y_train_means,
-                train_means_preds,
             )
 
             these_stats: Dict[str, Union[float, str]] = {
@@ -355,8 +253,6 @@ class OptimiseModel(object):
             test_stats = self.regression_stats(
                 y_test,
                 test_preds,
-                y_test_means,
-                test_means_preds,
             )
             these_stats.update({f"test_{k}": v for k, v in test_stats.items()})
             these_stats.update({"cv": i, "name": self.model_name})
@@ -370,21 +266,21 @@ class OptimiseModel(object):
 
         try:
             stats = self.cv_eval(params)
-        except ValueError as e:
-            raise e
+        except ValueError as e:  # noqa
+            #raise e
             # Sometimes calculating mae etc doesn't work.
             return np.nan
 
         stats_summary = {
-            "mae": stats["test_mae_means"].mean(),
-            "median_ae": stats["test_median_ae_means"].mean(),
-            "pearsons": stats["test_pearsons_means"].mean(),
-            "spearmans": stats["test_spearmans_means"].mean(),
-            "tau": stats["test_tau_means"].mean(),
+            "mae": stats["test_mae"].mean(),
+            "median_ae": stats["test_median_ae"].mean(),
+            "pearsons": stats["test_pearsons"].mean(),
+            "spearmans": stats["test_spearmans"].mean(),
+            "tau": stats["test_tau"].mean(),
             "explained_variance": (
-                stats["test_explained_variance_means"].mean()
+                stats["test_explained_variance"].mean()
             ),
-            "r2": stats["test_r2_means"].mean(),
+            "r2": stats["test_r2"].mean(),
         }
 
         for k, v in stats_summary.items():
@@ -398,22 +294,16 @@ class OptimiseModel(object):
         trial: "optuna.Trial"
     ) -> Dict[str, BaseTypes]:
         params = {}
-
         if cls.use_weights:
             params["weight"] = trial.suggest_categorical(
                 "weight",
-                ["none", "variance", "distance", "cluster"]
+                ["none", "distance", "cluster"]
             )
         else:
             params["weight"] = trial.suggest_categorical(
                 "weight",
                 ["none"]
             )
-
-        params["train_means"] = trial.suggest_categorical(
-            "train_means",
-            [True, False]
-        )
 
         params["min_maf"] = trial.suggest_float(
             "min_maf",
@@ -445,49 +335,23 @@ class OptimiseModel(object):
             .apply(lambda g: "_".join(map(str, g)), axis=1)
             .values
         )
-
-        if params_["train_means"]:
-            X = (
-                data
-                .groupby("_indiv_grouping_")
-                [self.grouping_columns + self.marker_columns]
-                .mean()
-            )
-            y = (
-                data
-                .groupby("_indiv_grouping_")
-                [self.response_columns]
-                .mean()
-                .loc[X.index.values, ]
-            )
-            indiv = (
-                data
-                .groupby("_indiv_grouping_")
-                ["_indiv_"]
-                .first()
-                .loc[X.index.values, ]
-            )
-            grouping = X.index.values
-        else:
-            X = data.loc[:, self.grouping_columns + self.marker_columns]
-            y = data.loc[:, self.response_columns]
-            indiv = data.loc[:, "_indiv_"]
-            grouping = data.loc[:, "_indiv_grouping_"].values
+        X = data.loc[:, self.grouping_columns + self.marker_columns]
+        y = data.loc[:, self.response_columns]
+        indiv = data.loc[:, "_indiv_"]
+        grouping = data.loc[:, "_indiv_grouping_"].values
 
         params_["nsamples"] = len(np.unique(indiv))
-        weight_fn = WEIGHT_FNS[params_.get("weight", "none")]
+        weight_fn_str = params_.get("weight", "none")
+        assert isinstance(weight_fn_str, str)
+        weight_fn = WEIGHT_FNS[weight_fn_str]
 
         if weight_fn is None:
             weights = None
         else:
-            # Need to do this because variance needed.
             weights = weight_fn(
-                (data
-                 .loc[:, self.grouping_columns + self.marker_columns]
-                 .values),
-                data.loc[:, self.response_columns].values,
-                data.loc[:, "_indiv_grouping_"].values,
-                params_["train_means"]
+                X,
+                y,
+                indiv,
             )
 
         if isinstance(weights, pd.Series):
@@ -523,9 +387,8 @@ class OptimiseModel(object):
     ):
         raise NotImplementedError()
 
-    @classmethod
     def predict(
-        cls,
+        self,
         model,
         X: "npt.ArrayLike",
         grouping: Optional["npt.ArrayLike"] = None,
@@ -566,29 +429,22 @@ class SKModel(OptimiseModel):
         """ Default is suitable for sklearn compatible models. """
 
         model = self.model(params)
-        indiv_kwargs = {
-            "preprocessor__features__markers__individuals": individuals,
-            "preprocessor__features__grouping__individuals": grouping,
-            "preprocessor__interactions__interactions__individuals": grouping,
-        }
-
         X_ = np.array(X)
         y_ = np.array(y)
 
         if (
             (len(self.response_columns) == 1) and
-            (y_.shape[-1] == 1)
+            (len(y_.shape) == 1)
         ):
-            y_ = y_.reshape(-1)
+            y_ = np.expand_dims(-1)
 
         if sample_weights is None:
-            model.fit(X_, y_, **indiv_kwargs, **kwargs)
+            model.fit(X_, y_, **kwargs)
         else:
             model.fit(
                 X_,
                 y_,
                 model__sample_weight=sample_weights,
-                **indiv_kwargs,
                 **kwargs
             )
 
@@ -1335,11 +1191,7 @@ class SKModel(OptimiseModel):
 
     def sample_preprocessing_model(self, params: Dict[str, Any]):
         from sklearn.pipeline import Pipeline
-
-        from selectml.sk.compose import Aggregated
-        from selectml.sk.fixes.sklearn_coltransformer import (
-            MyColumnTransformer
-        )
+        from sklearn.compose import ColumnTransformer
 
         from ..feature_selection import MAFSelector
 
@@ -1360,7 +1212,7 @@ class SKModel(OptimiseModel):
             ("nonlinear", nonlinear),
         ]
 
-        transformers = MyColumnTransformer([
+        transformers = ColumnTransformer([
             (k, v, use_all_columns) for k, v in transformers
         ])
 
@@ -1377,21 +1229,15 @@ class SKModel(OptimiseModel):
 
         if grouping is None:
             grouping_trans = "drop"
-        elif isinstance(grouping, str):
-            grouping_trans = grouping
         else:
-            grouping_trans = Aggregated(
-                grouping,
-                agg_train=True,
-                agg_test=False
-            )
+            grouping_trans = grouping
 
         n_markers = len(self.marker_columns)
         n_groups = len(self.grouping_columns)
         trans = [
             (
                 "features",
-                MyColumnTransformer([
+                ColumnTransformer([
                     (
                         "grouping",
                         grouping_trans,
@@ -1399,11 +1245,7 @@ class SKModel(OptimiseModel):
                     ),
                     (
                         "markers",
-                        Aggregated(
-                            marker_pipeline,
-                            agg_train=True,
-                            agg_test=False
-                        ),
+                        marker_pipeline,
                         np.arange(n_groups, n_groups + n_markers)
                     )
                 ])
@@ -1417,12 +1259,12 @@ class SKModel(OptimiseModel):
         if interactions is None:
             interactions = "drop"
         elif interactions not in ("drop", "passthrough"):
-            interactions = Aggregated(interactions, agg_test=False)
+            interactions = interactions
 
         trans.append(
             (
                 "interactions",
-                MyColumnTransformer([
+                ColumnTransformer([
                     ("features", "passthrough", use_all_columns),
                     (
                         "interactions",
@@ -1558,7 +1400,6 @@ class TFBaseModel(OptimiseModel):
 
     def _sample_transformed_target_model(self, params: Dict[str, Any]):
         from sklearn.preprocessing import StandardScaler, QuantileTransformer
-        from selectml.sk.compose import Aggregated
 
         preprocessor = params["target_transformer"]
 
@@ -1577,7 +1418,7 @@ class TFBaseModel(OptimiseModel):
         if g is None:
             return None
         else:
-            return Aggregated(g, agg_train=True, agg_test=False)
+            return g
 
     def _sample_marker_preprocessing_params(
         self,
@@ -1762,8 +1603,6 @@ class TFBaseModel(OptimiseModel):
 
     def sample_preprocessing_model(self, params: Dict[str, Any]):
         from sklearn.pipeline import Pipeline
-
-        from selectml.sk.compose import Aggregated
         from sklearn.preprocessing import StandardScaler
 
         from ..feature_selection import MAFSelector
@@ -1775,22 +1614,17 @@ class TFBaseModel(OptimiseModel):
         def use_all_columns(X):
             return np.repeat(True, X.shape[1])
 
-        marker_trans = Aggregated(
-            Pipeline([
-                (
-                    "maf_filter",
-                    MAFSelector(
-                        threshold=params["min_maf"],
-                        ploidy=self.ploidy
-                    )
-                ),
-                ("marker_scaler", marker),
-                ("feature_selection", feature_selection),
-            ]),
-            agg_train=True,
-            agg_test=False,
-            xaggregator="first"
-        )
+        marker_trans = Pipeline([
+            (
+                "maf_filter",
+                MAFSelector(
+                    threshold=params["min_maf"],
+                    ploidy=self.ploidy
+                )
+            ),
+            ("marker_scaler", marker),
+            ("feature_selection", feature_selection),
+        ])
 
         grouping_trans = StandardScaler()
 
@@ -2037,7 +1871,7 @@ class BGLRBaseModel(OptimiseModel):
             raise ValueError("This shouldn't happen")
 
         if params["noia_dom"]:
-            d = NOIADominanceKernel()
+            d: Optional[NOIADominanceKernel] = NOIADominanceKernel()
         else:
             d = None
 
@@ -2049,7 +1883,11 @@ class BGLRBaseModel(OptimiseModel):
                 a = NOIAAdditiveKernel()
                 train_a = True
 
-            e = HadamardCovariance(a, a, fit_a=train_a, fit_b=False)
+            e: Optional[HadamardCovariance] = HadamardCovariance(
+                a, a,
+                fit_a=train_a,
+                fit_b=False
+            )
         else:
             e = None
 
