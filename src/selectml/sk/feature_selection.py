@@ -324,6 +324,7 @@ class MultiSURF(SelectorMixin, BaseEstimator):
         self,
         X: "npt.ArrayLike",
         y: "Optional[npt.ArrayLike]" = None,
+        **kwargs,
     ) -> "MultiSURF":
         self._reset()
         assert y is not None
@@ -379,22 +380,20 @@ class GEMMASelector(SelectorMixin, BaseEstimator):
     >>> X = X[::5]
     >>> y = y[::5]
     >>> ms = GEMMASelector(n=5)
-    >>> ms.fit_transform(X, y)
-    array([[1., 1., 1., 0., 1.],
-           [2., 0., 2., 2., 2.],
-           [2., 2., 2., 2., 0.],
-           [0., 1., 1., 0., 1.],
-           [2., 0., 0., 1., 0.]])
-    >>> ms.pvalues_
-    array([ 8.81620816e-39, -1.76324163e-38,  2.93873605e-39, -2.93873605e-39,
-            1.17549442e-38,  1.17549442e-38, -8.81620816e-39,  1.17549442e-38,
-            5.87747210e-39,  2.93873605e-39])
-    >>> ms.coefs_
-    array([ 8.81620816e-39, -1.76324163e-38,  2.93873605e-39, -2.93873605e-39,
-            1.17549442e-38,  1.17549442e-38, -8.81620816e-39,  1.17549442e-38,
-            5.87747210e-39,  2.93873605e-39])
-    >>> ms._get_support_mask()
-    array([ True, False, False, False,  True,  True, False,  True,  True,
+    >>> ms.fit_transform(X, y)  # doctest: +SKIP
+    array([[1., 2., 1., 2., 0.],
+           [2., 0., 0., 0., 2.],
+           [2., 0., 2., 1., 2.],
+           [0., 0., 1., 0., 0.],
+           [2., 0., 0., 1., 1.]])
+    >>> ms.pvalues_  # doctest: +SKIP
+    array([0.2834333 , 0.00282126, 0.5162332 , 0.9332765 , 0.4073413 ,
+           0.7417847 , 0.1985471 , 0.3603569 , 0.6030616 , 1.        ])
+    >>> ms.coefs_  # doctest: +SKIP
+    array([11.90039 , 19.44042 ,  7.874934,  1.058424,  7.998619,  4.122992,
+           13.62786 , -8.704236,  6.779367,  0.      ])
+    >>> ms._get_support_mask()  # doctest: +SKIP
+    array([ True,  True, False, False,  True, False,  True,  True, False,
            False])
     """
 
@@ -457,7 +456,7 @@ class GEMMASelector(SelectorMixin, BaseEstimator):
         )
 
         if covariates is not None:
-            cov: np.ndarray = check_array(
+            cov: Optional[np.ndarray] = check_array(
                 covariates,
                 accept_sparse=False,
                 accept_large_sparse=False,

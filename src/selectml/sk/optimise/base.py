@@ -267,7 +267,7 @@ class OptimiseModel(object):
         try:
             stats = self.cv_eval(params)
         except ValueError as e:  # noqa
-            #raise e
+            # raise e
             # Sometimes calculating mae etc doesn't work.
             return np.nan
 
@@ -436,7 +436,7 @@ class SKModel(OptimiseModel):
             (len(self.response_columns) == 1) and
             (len(y_.shape) == 1)
         ):
-            y_ = np.expand_dims(-1)
+            y_ = np.expand_dims(y, -1)
 
         if sample_weights is None:
             model.fit(X_, y_, **kwargs)

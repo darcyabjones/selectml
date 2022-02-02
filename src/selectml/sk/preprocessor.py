@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Sequence, Union, Optional
     from typing import List
+    from typing import Type
     import numpy.typing as npt
 
 
@@ -865,3 +866,222 @@ class NOIADominanceScaler(TransformerMixin, BaseEstimator):
         het = het_vals * np.isclose(X_, self.Aa).astype(float)
         rec = rec_vals * np.isclose(X_, self.aa).astype(float)
         return dom + het + rec
+
+
+class OrdinalTransformer(TransformerMixin, BaseEstimator):
+    """Convert a continuous variable into a multiclass classification.  # noqa
+    This is used for ordinal regression situations.
+
+    Examples:
+
+    >>> import numpy as np
+    >>> from selectml.sk.preprocessor import OrdinalTransformer
+    >>> np.random.seed(5)
+    >>> x = np.random.uniform(0, 3, size=(5, 2))
+    >>> ot = OrdinalTransformer(boundaries=[np.arange(3 + 1), np.arange(3 + 1)])
+    >>> xhat = ot.fit_transform(x)
+    >>> xhat
+    array([[0.66597951, 0.        , 0.        , 1.        , 1.        , 0.61219692],
+           [0.62015747, 0.        , 0.        , 1.        , 1.        , 0.75583272],
+           [1.        , 0.46523357, 0.        , 1.        , 0.83523159, 0.        ],
+           [1.        , 1.        , 0.29772357, 1.        , 0.55525396, 0.        ],
+           [0.8904015 , 0.        , 0.        , 0.56316369, 0.        , 0.        ]])
+    >>> assert np.isclose(ot.inverse_transform(xhat), x).all(), (x, xhat)
+    """
+
+    requires_y: bool = False
+
+    def __init__(
+        self,
+        *,
+        boundaries: "Union[str, Sequence[npt.ArrayLike]]" = "auto",
+        dtype: "Type" = float,
+    ):
+        self.boundaries = boundaries
+        self.dtype = dtype
+        return
+
+    def _reset(self):
+        return
+
+    def _check_X(self, X, force_all_finite=True):
+        """
+        Perform custom check_array:
+        - convert list of strings to object dtype
+        - check for missing values for object dtype data (check_array does
+          not do that)
+        - return list of features (arrays): this list of features is
+          constructed feature by feature to preserve the data types
+          of pandas DataFrame columns, as otherwise information is lost
+          and cannot be used, eg for the `categories_` attribute.
+        """
+        if not (hasattr(X, "iloc") and getattr(X, "ndim", 0) == 2):
+            # if not a dataframe, do normal check_array validation
+            X_temp = check_array(
+                X,
+                dtype=None,
+                force_all_finite=force_all_finite
+            )
+
+            if (
+                not hasattr(X, "dtype")
+                and np.issubdtype(X_temp.dtype, np.str_)
+            ):
+                X = check_array(
+                    X,
+                    dtype=object,
+                    force_all_finite=force_all_finite
+                )
+            else:
+                X = X_temp
+            needs_validation = False
+        else:
+            # pandas dataframe, do validation later column by column, in order
+            # to keep the dtype information to be used in the encoder.
+            needs_validation = force_all_finite
+
+        n_samples, n_features = X.shape
+        X_columns = []
+
+        for i in range(n_features):
+            Xi = self._get_feature(X, feature_idx=i)
+            Xi = check_array(
+                Xi,
+                ensure_2d=False,
+                dtype=None,
+                force_all_finite=needs_validation
+            )
+            X_columns.append(Xi)
+
+        return X_columns, n_samples, n_features
+
+    def _get_feature(self, X, feature_idx):
+        if hasattr(X, "iloc"):
+            # pandas dataframes
+            return X.iloc[:, feature_idx]
+        # numpy arrays, sparse arrays
+        return X[:, feature_idx]
+
+    @staticmethod
+    def _find_range(Xi):
+        min_ = np.floor(np.min(Xi, where=~np.isnan(Xi), initial=np.inf))
+        max_ = np.ceil(np.max(Xi, where=~np.isnan(Xi), initial=-np.inf)) + 0.1
+        return np.arange(min_, max_, 1)
+
+    def _fit(self, X, force_all_finite=True):
+        self._check_n_features(X, reset=True)
+        self._check_feature_names(X, reset=True)
+        X_list, n_samples, n_features = self._check_X(
+            X, force_all_finite=force_all_finite
+        )
+        self.n_features_in_ = n_features
+
+        if self.boundaries != "auto":
+            if len(self.boundaries) != n_features:
+                raise ValueError(
+                    "Shape mismatch: if boundaries is an array,"
+                    " it has to be of shape (n_features,)."
+                )
+
+        self.categories_ = []
+
+        for i in range(n_features):
+            Xi = X_list[i]
+            if self.boundaries == "auto":
+                cats = self._find_range(Xi)
+            else:
+                cats = np.sort(np.array(self.boundaries[i], dtype=Xi.dtype))
+                if Xi.dtype.kind in "OUS":
+                    print(Xi.dtype.kind)
+                    raise ValueError("Input type must be numeric")
+
+                if np.any(np.isnan(cats)):
+                    raise ValueError(
+                        "Cannot support nan values in ordinal categories"
+                    )
+            self.categories_.append(cats)
+
+    def fit(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None
+    ) -> "OrdinalTransformer":
+        self._fit(X, force_all_finite="allow-nan")
+        return self
+
+    def _transform_column(
+        self,
+        Xi: "npt.ArrayLike",
+        cats: "npt.ArrayLike"
+    ) -> np.ndarray:
+        diffs = np.diff(cats)
+        preds = np.expand_dims(Xi, -1) - np.expand_dims(cats[:-1], 0)
+        whole = (preds >= diffs).astype(int)
+        fractional = (
+            ((preds // diffs) == 0).astype(int)
+            * (preds % diffs) / diffs
+        )
+        return whole + fractional
+
+    def transform(self, X: "npt.ArrayLike") -> np.ndarray:
+        check_is_fitted(self)
+
+        self._check_feature_names(X, reset=False)
+        self._check_n_features(X, reset=False)
+        X_list, n_samples, n_features = self._check_X(
+            X, force_all_finite="allow-nan"
+        )
+
+        arrays = []
+        for i in range(n_features):
+            Xi = X_list[i]
+            cats = self.categories_[i]
+            trans = self._transform_column(Xi, cats)
+            arrays.append(trans)
+
+        return np.concatenate(arrays, axis=1)
+
+    def inverse_transform(self, X: "npt.ArrayLike") -> np.ndarray:
+        check_is_fitted(self)
+
+        X = check_array(X, accept_sparse=False)
+
+        n_samples, _ = X.shape
+        n_features = len(self.categories_)
+
+        n_transformed_features = sum(len(c) - 1 for c in self.categories_)
+        if X.shape[1] != n_transformed_features:
+            raise ValueError(
+                "Shape of the passed X data is not correct. "
+                f"Expected {n_transformed_features} columns got {X.shape[1]}."
+            )
+
+        dt = np.find_common_type([c.dtype for c in self.categories_], [])
+        X_tr = np.empty((n_samples, n_features), dtype=dt)
+
+        def mappl(Xi, mapper, diffs):
+            pos, = np.where(Xi == 1)
+            if len(pos) == 0:
+                pos = 0
+            else:
+                pos = pos.max() + 1
+
+            extra = np.sum(Xi / diffs, where=~(Xi == 1))
+            return mapper[pos] + extra
+
+        j = 0
+        for i in range(n_features):
+            cats = self.categories_[i]
+            n_categories = len(cats) - 1
+            diffs = np.diff(cats)
+
+            Xi = X[:, j:(j + n_categories)]
+            X_tr[:, i] = np.apply_along_axis(
+                lambda xi: mappl(xi, cats, diffs),
+                1,
+                Xi
+            )
+
+            j += n_categories
+
+        return X_tr
