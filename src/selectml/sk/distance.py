@@ -1166,7 +1166,6 @@ class SquaredEuclideanDistance(TransformerMixin, BaseEstimator):
     def transform(
         self,
         X: "npt.ArrayLike",
-        dist: "Optional[float]" = None
     ) -> np.ndarray:
         """Scale features of X according to feature_range.
         Parameters
@@ -1196,8 +1195,5 @@ class SquaredEuclideanDistance(TransformerMixin, BaseEstimator):
             1,
             X_
         )
-
-        if dist is None:
-            dist = self.dist
 
         return np.exp((-self.bandwidth * dist) / X_.shape[1])

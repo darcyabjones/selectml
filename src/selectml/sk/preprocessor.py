@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import pandas as pd
 import numpy as np
 from sklearn.base import TransformerMixin, BaseEstimator
 from sklearn.utils.validation import (
@@ -13,6 +14,196 @@ if TYPE_CHECKING:
     from typing import List
     from typing import Type
     import numpy.typing as npt
+
+
+class Make2D(TransformerMixin, BaseEstimator):
+
+    def __init__(
+        self,
+        *,
+        validate=False,
+        accept_sparse=False,
+    ):
+        self.validate = validate
+        self.accept_sparse = accept_sparse
+
+    def _check_input(self, X, *, reset):
+        if self.validate:
+            return self._validate_data(
+                X,
+                accept_sparse=self.accept_sparse,
+                reset=reset
+            )
+        return X
+
+    def _make_2d(self, x):
+        if len(x.shape) == 1:
+            return x.reshape(-1, 1)
+        if len(x.shape) == 2:
+            return x
+        else:
+            raise ValueError("Cannot have more than a 2D or empty array.")
+
+    def _make_1d(self, x):
+        if len(x.shape) == 2:
+            if x.shape[1] > 1:
+                return x
+            elif x.shape[1] == 1:
+                return x.reshape(-1)
+            else:
+                raise ValueError("Cannot have a zero-dimensioned feature.")
+        elif len(x.shape) == 1:
+            return x
+        else:
+            raise ValueError("Cannot have more than a 2D or empty array.")
+
+    def fit(self, X, y=None):
+        """Fit transformer by checking X.
+        If ``validate`` is ``True``, ``X`` will be checked.
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Input array.
+        y : Ignored
+            Not used, present here for API consistency by convention.
+        Returns
+        -------
+        self : object
+            FunctionTransformer class instance.
+        """
+        X = self._check_input(X, reset=True)
+        return self
+
+    def transform(self, X):
+        """Transform X using the forward function.
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Input array.
+        Returns
+        -------
+        X_out : array-like, shape (n_samples, n_features)
+            Transformed input.
+        """
+        X = self._check_input(X, reset=False)
+        return self._make_2d(X)
+
+    def inverse_transform(self, X):
+        """Transform X using the inverse function.
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Input array.
+        Returns
+        -------
+        X_out : array-like, shape (n_samples, n_features)
+            Transformed input.
+        """
+        if self.validate:
+            X = check_array(X, accept_sparse=self.accept_sparse)
+        return self._make_1d(X)
+
+    def __sklearn_is_fitted__(self):
+        """Return True since FunctionTransfomer is stateless."""
+        return True
+
+    def _more_tags(self):
+        return {"no_validation": not self.validate, "stateless": True}
+
+
+class Make1D(TransformerMixin, BaseEstimator):
+
+    def __init__(
+        self,
+        *,
+        validate=False,
+        accept_sparse=False,
+    ):
+        self.validate = validate
+        self.accept_sparse = accept_sparse
+
+    def _check_input(self, X, *, reset):
+        if self.validate:
+            return self._validate_data(
+                X,
+                accept_sparse=self.accept_sparse,
+                reset=reset
+            )
+        return X
+
+    def _make_2d(self, x):
+        if len(x.shape) == 1:
+            return x.reshape(-1, 1)
+        if len(x.shape) == 2:
+            return x
+        else:
+            raise ValueError("Cannot have more than a 2D or empty array.")
+
+    def _make_1d(self, x):
+        if len(x.shape) == 2:
+            if x.shape[1] > 1:
+                return x
+            elif x.shape[1] == 1:
+                return x.reshape(-1)
+            else:
+                raise ValueError("Cannot have a zero-dimensioned feature.")
+        elif len(x.shape) == 1:
+            return x
+        else:
+            raise ValueError("Cannot have more than a 2D or empty array.")
+
+    def fit(self, X, y=None):
+        """Fit transformer by checking X.
+        If ``validate`` is ``True``, ``X`` will be checked.
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Input array.
+        y : Ignored
+            Not used, present here for API consistency by convention.
+        Returns
+        -------
+        self : object
+            FunctionTransformer class instance.
+        """
+        X = self._check_input(X, reset=True)
+        return self
+
+    def transform(self, X):
+        """Transform X using the forward function.
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Input array.
+        Returns
+        -------
+        X_out : array-like, shape (n_samples, n_features)
+            Transformed input.
+        """
+        X = self._check_input(X, reset=False)
+        return self._make_1d(X)
+
+    def inverse_transform(self, X):
+        """Transform X using the inverse function.
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Input array.
+        Returns
+        -------
+        X_out : array-like, shape (n_samples, n_features)
+            Transformed input.
+        """
+        if self.validate:
+            X = check_array(X, accept_sparse=self.accept_sparse)
+        return self._make_2d(X)
+
+    def __sklearn_is_fitted__(self):
+        """Return True since FunctionTransfomer is stateless."""
+        return True
+
+    def _more_tags(self):
+        return {"no_validation": not self.validate, "stateless": True}
 
 
 class Unity(TransformerMixin, BaseEstimator):
@@ -55,7 +246,11 @@ class Unity(TransformerMixin, BaseEstimator):
 
         return self
 
-    def transform(self, X: "npt.ArrayLike") -> np.ndarray:
+    def transform(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None,
+    ) -> np.ndarray:
         """Scale features of X according to feature_range.
         Parameters
         ----------
@@ -68,7 +263,11 @@ class Unity(TransformerMixin, BaseEstimator):
         """
         return np.array(X)
 
-    def inverse_transform(self, X: "npt.ArrayLike") -> np.ndarray:
+    def inverse_transform(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None,
+    ) -> np.ndarray:
         """Undo the scaling of X according to feature_range.
         Parameters
         ----------
@@ -210,7 +409,11 @@ class MAFScaler(TransformerMixin, BaseEstimator):
         self._reset()
         return self.partial_fit(X, y)
 
-    def transform(self, X: "npt.ArrayLike") -> np.ndarray:
+    def transform(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None,
+    ) -> np.ndarray:
         """Scale features of X according to feature_range.
         Parameters
         ----------
@@ -589,7 +792,11 @@ class NOIAAdditiveScaler(TransformerMixin, BaseEstimator):
         self._reset()
         return self.partial_fit(X, y)
 
-    def transform(self, X: "npt.ArrayLike") -> np.ndarray:
+    def transform(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None,
+    ) -> np.ndarray:
         """Scale features of X according to feature_range.
         Parameters
         ----------
@@ -829,7 +1036,11 @@ class NOIADominanceScaler(TransformerMixin, BaseEstimator):
         self._reset()
         return self.partial_fit(X, y)
 
-    def transform(self, X: "npt.ArrayLike") -> np.ndarray:
+    def transform(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None,
+    ) -> np.ndarray:
         """Scale features of X according to feature_range.
         Parameters
         ----------
@@ -904,7 +1115,11 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
     def _reset(self):
         return
 
-    def _check_X(self, X, force_all_finite=True):
+    def _check_X(
+        self,
+        X: "npt.ArrayLike",
+        force_all_finite: "Union[str, bool]" = True
+    ):
         """
         Perform custom check_array:
         - convert list of strings to object dtype
@@ -917,8 +1132,8 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
         """
         if not (hasattr(X, "iloc") and getattr(X, "ndim", 0) == 2):
             # if not a dataframe, do normal check_array validation
-            X_temp = check_array(
-                X,
+            X_temp: np.ndarray = check_array(
+                np.array(X),
                 dtype=None,
                 force_all_finite=force_all_finite
             )
@@ -927,24 +1142,27 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
                 not hasattr(X, "dtype")
                 and np.issubdtype(X_temp.dtype, np.str_)
             ):
-                X = check_array(
-                    X,
+                X_ = check_array(
+                    np.array(X),
                     dtype=object,
                     force_all_finite=force_all_finite
                 )
             else:
-                X = X_temp
-            needs_validation = False
+                X_ = X_temp
+            needs_validation: "Union[str, bool]" = False
+            n_samples, n_features = X_.shape
         else:
             # pandas dataframe, do validation later column by column, in order
             # to keep the dtype information to be used in the encoder.
             needs_validation = force_all_finite
+            assert isinstance(X, pd.DataFrame)
+            X_ = X
+            n_samples, n_features = X_.shape
 
-        n_samples, n_features = X.shape
         X_columns = []
 
         for i in range(n_features):
-            Xi = self._get_feature(X, feature_idx=i)
+            Xi = self._get_feature(X_, feature_idx=i)
             Xi = check_array(
                 Xi,
                 ensure_2d=False,
@@ -955,20 +1173,31 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
 
         return X_columns, n_samples, n_features
 
-    def _get_feature(self, X, feature_idx):
+    def _get_feature(
+        self,
+        X: "Union[npt.ArrayLike, pd.DataFrame]",
+        feature_idx: int
+    ) -> "np.ndarray":
         if hasattr(X, "iloc"):
+            assert isinstance(X, pd.DataFrame)
             # pandas dataframes
-            return X.iloc[:, feature_idx]
-        # numpy arrays, sparse arrays
-        return X[:, feature_idx]
+            return X.iloc[:, feature_idx].values
+        else:
+            # numpy arrays, sparse arrays
+            return np.array(X)[:, feature_idx]
 
     @staticmethod
-    def _find_range(Xi):
-        min_ = np.floor(np.min(Xi, where=~np.isnan(Xi), initial=np.inf))
-        max_ = np.ceil(np.max(Xi, where=~np.isnan(Xi), initial=-np.inf)) + 0.1
+    def _find_range(Xi: "npt.ArrayLike") -> "np.ndarray":
+        Xi_ = np.array(Xi)
+        min_ = np.floor(np.min(Xi_, where=~np.isnan(Xi_), initial=np.inf))
+        max_ = np.ceil(np.max(Xi_, where=~np.isnan(Xi_), initial=-np.inf)) + 0.1  # noqa
         return np.arange(min_, max_, 1)
 
-    def _fit(self, X, force_all_finite=True):
+    def _fit(
+        self,
+        X: "npt.ArrayLike",
+        force_all_finite: "Union[bool, str]" = True
+    ):
         self._check_n_features(X, reset=True)
         self._check_feature_names(X, reset=True)
         X_list, n_samples, n_features = self._check_X(
@@ -1011,11 +1240,14 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
 
     def _transform_column(
         self,
-        Xi: "npt.ArrayLike",
-        cats: "npt.ArrayLike"
+        Xi: "np.ndarray",
+        cats: "np.ndarray"
     ) -> np.ndarray:
         diffs = np.diff(cats)
-        preds = np.expand_dims(Xi, -1) - np.expand_dims(cats[:-1], 0)
+        preds: "np.ndarray" = (
+            np.expand_dims(Xi, -1) -
+            np.expand_dims(cats[:-1], 0)
+        )
         whole = (preds >= diffs).astype(int)
         fractional = (
             ((preds // diffs) == 0).astype(int)
@@ -1023,7 +1255,11 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
         )
         return whole + fractional
 
-    def transform(self, X: "npt.ArrayLike") -> np.ndarray:
+    def transform(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None,
+    ) -> np.ndarray:
         check_is_fitted(self)
 
         self._check_feature_names(X, reset=False)
@@ -1041,19 +1277,23 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
 
         return np.concatenate(arrays, axis=1)
 
-    def inverse_transform(self, X: "npt.ArrayLike") -> np.ndarray:
+    def inverse_transform(
+        self,
+        X: "npt.ArrayLike",
+        y: "Optional[npt.ArrayLike]" = None,
+    ) -> np.ndarray:
         check_is_fitted(self)
 
-        X = check_array(X, accept_sparse=False)
+        X_: np.ndarray = check_array(X, accept_sparse=False)
 
-        n_samples, _ = X.shape
+        n_samples, _ = X_.shape
         n_features = len(self.categories_)
 
         n_transformed_features = sum(len(c) - 1 for c in self.categories_)
-        if X.shape[1] != n_transformed_features:
+        if X_.shape[1] != n_transformed_features:
             raise ValueError(
                 "Shape of the passed X data is not correct. "
-                f"Expected {n_transformed_features} columns got {X.shape[1]}."
+                f"Expected {n_transformed_features} columns got {X_.shape[1]}."
             )
 
         dt = np.find_common_type([c.dtype for c in self.categories_], [])
@@ -1075,7 +1315,7 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
             n_categories = len(cats) - 1
             diffs = np.diff(cats)
 
-            Xi = X[:, j:(j + n_categories)]
+            Xi = X_[:, j:(j + n_categories)]
             X_tr[:, i] = np.apply_along_axis(
                 lambda xi: mappl(xi, cats, diffs),
                 1,

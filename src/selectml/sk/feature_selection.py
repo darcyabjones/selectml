@@ -58,8 +58,22 @@ class MAFSelector(SelectorMixin, BaseEstimator):
 
     requires_y: bool = False
 
-    def __init__(self, threshold: float = 0.0, ploidy: int = 2):
+    def __init__(
+        self,
+        threshold: "Optional[float]" = None,
+        n: "Optional[int]" = None,
+        ploidy: int = 2
+    ):
+        if (threshold is not None) and (n is not None):
+            raise ValueError(
+                "Please select a value for threshold or n, "
+                "but not both."
+            )
+        elif (threshold is None) and (n is None):
+            threshold = 0.0
+
         self.threshold = threshold
+        self.n = n
         self.ploidy = ploidy
         return
 
@@ -79,7 +93,7 @@ class MAFSelector(SelectorMixin, BaseEstimator):
     def partial_fit(
         self,
         X: "npt.ArrayLike",
-        y: "Optional[npt.ArrayLike]",
+        y: "Optional[npt.ArrayLike]" = None,
         **kwargs
     ) -> "MAFSelector":
         """
@@ -140,10 +154,20 @@ class MAFSelector(SelectorMixin, BaseEstimator):
     def _get_support_mask(self) -> "np.ndarray":
         check_is_fitted(self)
         p_i = self.allele_counts_ / (self.ploidy * self.n_samples_seen_)
-        # We have to check both upper and lower because we aren't guaranteed
-        # that variant 1 is the minor allele.
-        mask = (p_i > self.threshold) & (p_i < (1 - self.threshold))
-        return mask
+
+        if self.n is not None:
+            # Take those closest to MAF 0.5.
+            sorted_ = np.argsort(np.abs(0.5 - p_i))[:self.n]
+            out = np.full(p_i.shape, False)
+            out[sorted_] = True
+            return out
+        elif self.threshold is not None:
+            # We have to check both upper and lower because we aren't
+            # guaranteed that variant 1 is the minor allele.
+            mask = (p_i > self.threshold) & (p_i < (1 - self.threshold))
+            return mask
+        else:
+            raise ValueError("Either n or threshold needs to be set")
 
 
 class MultiSURF(SelectorMixin, BaseEstimator):
@@ -274,7 +298,7 @@ class MultiSURF(SelectorMixin, BaseEstimator):
     def partial_fit(
         self,
         X: "npt.ArrayLike",
-        y: "Optional[npt.ArrayLike]",
+        y: "Optional[npt.ArrayLike]" = None,
         **kwargs
     ) -> "MultiSURF":
         first_pass: bool = not hasattr(self, "n_samples_seen_")
@@ -428,7 +452,7 @@ class GEMMASelector(SelectorMixin, BaseEstimator):
     def partial_fit(
         self,
         X: "npt.ArrayLike",
-        y: "Optional[npt.ArrayLike]",
+        y: "Optional[npt.ArrayLike]" = None,
         covariates: "Optional[npt.ArrayLike]" = None,
         **kwargs
     ) -> "GEMMASelector":

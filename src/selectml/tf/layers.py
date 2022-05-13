@@ -1,5 +1,6 @@
 import tensorflow as tf
 from tensorflow.keras import layers
+from tensorflow.keras import activations
 
 
 class AddChannel(layers.Layer):
@@ -11,12 +12,15 @@ class AddChannel(layers.Layer):
     The latter is expected by LocallyConnected1D etc.
     """
 
-    def __init__(self, **kwargs):
-        super(AddChannel, self).__init__(**kwargs)
+    def __init__(self, name="add_channel", **kwargs):
+        super(AddChannel, self).__init__(name=name, **kwargs)
         return
 
     def build(self, input_shape):
-        self.reshaper = layers.Reshape((input_shape[1], 1))
+        self.reshaper = layers.Reshape(
+            (input_shape[1], 1),
+            name=f"{self.name}/reshape"
+        )
         return
 
     def call(self, inputs):
@@ -31,8 +35,13 @@ class Flatten1D(layers.Layer):
     Output can go into FC layers.
     """
 
-    def __init__(self, pooling="max", **kwargs):
-        super(Flatten1D, self).__init__(**kwargs)
+    def __init__(
+        self,
+        pooling="max",
+        name="flatten1d",
+        **kwargs
+    ):
+        super(Flatten1D, self).__init__(name=name, **kwargs)
         assert pooling in ("max", "average")
         self.pooling = pooling
         return
@@ -60,8 +69,10 @@ class LocalResidual(layers.Layer):
         nonlinear_params=None,
         use_batchnorm=False,
         drop_linear=False,
+        name="local_residual",
+        **kwargs
     ):
-        super(LocalResidual, self).__init__()
+        super(LocalResidual, self).__init__(name=name, **kwargs)
         self.implementation = implementation
         self.use_batchnorm = use_batchnorm
         self.drop_linear = drop_linear
@@ -78,12 +89,14 @@ class LocalResidual(layers.Layer):
             kernel_size=1,
             strides=1,
             implementation=implementation,
+            name=f"{name}/nonlinear",
             **nonlinear_params,
-            name="nonlinear"
         )
 
         if use_batchnorm:
-            self.batchnorm = layers.BatchNormalization(name="batchnorm")
+            self.batchnorm = layers.BatchNormalization(
+                name=f"{name}/batchnorm"
+            )
         else:
             self.batchnorm = None
 
@@ -98,8 +111,8 @@ class LocalResidual(layers.Layer):
             kernel_size=1,
             strides=1,
             implementation=implementation,
+            name=f"{name}/gain",
             **gain_params,
-            name="gain"
         )
 
         if not drop_linear:
@@ -158,9 +171,10 @@ class LocalLinkage(layers.Layer):
         bias_regularizer=None,
         dropout_rate=None,
         use_bn=False,
+        name="local_linkage",
         **kwargs
     ):
-        super(LocalLinkage, self).__init__(**kwargs)
+        super(LocalLinkage, self).__init__(name=name, **kwargs)
 
         self.nlayers = nlayers
         self.filters = filters
@@ -191,7 +205,10 @@ class LocalLinkage(layers.Layer):
                 act = activation
 
             if (dropout_rate is not None) and (i > 0):
-                self.layers.append(layers.Dropout(dropout_rate))
+                self.layers.append(layers.Dropout(
+                    dropout_rate,
+                    name=f"{name}/dropout:{i}"
+                ))
 
             layer = layers.LocallyConnected1D(
                 filters=filters,
@@ -202,14 +219,15 @@ class LocalLinkage(layers.Layer):
                 kernel_regularizer=kernel_regularizer,
                 activity_regularizer=activity_regularizer,
                 bias_regularizer=bias_regularizer,
-                activation=act
+                activation=act,
+                name=f"{name}/locally_connected_1d:{i}"
             )
 
             self.layers.append(layer)
             if use_bn:
-                self.layers.append(
-                    layers.BatchNormalization()
-                )
+                self.layers.append(layers.BatchNormalization(
+                    name=f"{name}/batchnorm:{i}"
+                ))
 
         return
 
@@ -233,8 +251,8 @@ class LocalLinkage(layers.Layer):
             use_bias=self.use_bias,
             use_bias_last=self.use_bias_last,
             activation_first=self.activation_first,
-            activation=self.activation,
-            activation_last=self.activation_last,
+            activation=activations.serialize(self.activation),
+            activation_last=activations.serialize(self.activation_last),
             bias_regularizer=self.bias_regularizer,
             dropout_rate=self.dropout_rate,
             use_bn=self.use_bn,
@@ -252,8 +270,17 @@ class LocalLasso(tf.keras.layers.Layer):
         nonneg=False,
         activation="linear",
         use_bias=False,
+        name="local_lasso",
+        **kwargs
     ):
-        super(LocalLasso, self).__init__()
+        super(LocalLasso, self).__init__(name=name, **kwargs)
+        self.implementation = implementation
+        self.kernel_regularizer = kernel_regularizer
+        self.activity_regularizer = activity_regularizer
+        self.nonneg = nonneg
+        self.activation = activation
+        self.use_bias = use_bias
+
         if kernel_regularizer is None and (activity_regularizer is not None):
             kernel_regularizer = tf.keras.regularizers.L1(1e-3)
 
@@ -270,12 +297,25 @@ class LocalLasso(tf.keras.layers.Layer):
             use_bias=use_bias,
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
-            kernel_constraint=weight_constraint
+            kernel_constraint=weight_constraint,
+            name=f"{name}/lasso"
         )
         return
 
     def call(self, inputs):
         return self.lasso(inputs)
+
+    def get_config(self):
+        config = super(LocalLasso, self).get_config()
+        config.update(dict(
+            implementation=self.implementation,
+            kernel_regularizer=self.kernel_regularizer,
+            activity_regularizer=self.activity_regularizer,
+            nonneg=self.nonneg,
+            activation=activations.serialize(self.activation),
+            use_bias=self.use_bias,
+        ))
+        return config
 
 
 class ConvLinkage(layers.Layer):
@@ -305,8 +345,10 @@ class ConvLinkage(layers.Layer):
         bias_regularizer=None,
         dropout_rate=None,
         use_bn=False,
+        name="conv_linkage",
+        **kwargs
     ):
-        super(ConvLinkage, self).__init__()
+        super(ConvLinkage, self).__init__(name=name, **kwargs)
         self.nlayers = nlayers
         self.filters = filters
         self.strides = strides
@@ -335,7 +377,10 @@ class ConvLinkage(layers.Layer):
                 act = activation
 
             if (dropout_rate is not None) and (i > 0):
-                self.layers.append(layers.Dropout(dropout_rate))
+                self.layers.append(layers.Dropout(
+                    dropout_rate,
+                    name=f"{name}/dropout:{i}"
+                ))
 
             layer = layers.Conv1D(
                 filters=filters ** (i + 1),
@@ -345,14 +390,15 @@ class ConvLinkage(layers.Layer):
                 kernel_regularizer=kernel_regularizer,
                 activity_regularizer=activity_regularizer,
                 bias_regularizer=bias_regularizer,
-                activation=act
+                activation=act,
+                name=f"{name}/conv1d:{i}"
             )
 
             self.layers.append(layer)
             if use_bn:
-                self.layers.append(
-                    layers.BatchNormalization()
-                )
+                self.layers.append(layers.BatchNormalization(
+                    name=f"{name}/batchnormalization:{i}"
+                ))
         return
 
     def call(self, inputs, training=False):
@@ -374,8 +420,8 @@ class ConvLinkage(layers.Layer):
             use_bias=self.use_bias,
             use_bias_last=self.use_bias_last,
             activation_first=self.activation_first,
-            activation=self.activation,
-            activation_last=self.activation_last,
+            activation=activations.serialize(self.activation),
+            activation_last=activations.serialize(self.activation_last),
             bias_regularizer=self.bias_regularizer,
             dropout_rate=self.dropout_rate,
             use_bn=self.use_bn,
@@ -395,15 +441,28 @@ class GatedUnit(layers.Layer):
         linear_kernel_regularizer=None,
         linear_activity_regularizer=None,
         linear_bias_regularizer=None,
+        name="gated_unit",
+        **kwargs
     ):
-        super(GatedUnit, self).__init__()
+        super(GatedUnit, self).__init__(name=name, **kwargs)
+        self.units = units
+        self.use_bias = use_bias
+        self.activation = activation
+        self.gate_kernel_regularizer = gate_kernel_regularizer
+        self.gate_activity_regularizer = gate_activity_regularizer
+        self.gate_bias_regularizer = gate_bias_regularizer
+        self.linear_kernel_regularizer = linear_kernel_regularizer
+        self.linear_activity_regularizer = linear_activity_regularizer
+        self.linear_bias_regularizer = linear_bias_regularizer
+
         self.linear = layers.Dense(
             units,
             activation=activation,
             use_bias=use_bias,
             kernel_regularizer=linear_kernel_regularizer,
             activity_regularizer=linear_activity_regularizer,
-            bias_regularizer=linear_bias_regularizer
+            bias_regularizer=linear_bias_regularizer,
+            name=f"{name}/linear"
         )
         self.sigmoid = layers.Dense(
             units,
@@ -412,10 +471,26 @@ class GatedUnit(layers.Layer):
             kernel_regularizer=gate_kernel_regularizer,
             activity_regularizer=gate_activity_regularizer,
             bias_regularizer=gate_bias_regularizer,
+            name=f"{name}/sigmoid"
         )
 
     def call(self, inputs):
         return self.linear(inputs) * self.sigmoid(inputs)
+
+    def get_config(self):
+        config = super(GatedUnit, self).get_config()
+        config.update(dict(
+            units=self.units,
+            use_bias=self.use_bias,
+            activation=activations.serialize(self.activation),
+            gate_kernel_regularizer=self.gate_kernel_regularizer,
+            gate_activity_regularizer=self.gate_activity_regularizer,
+            gate_bias_regularizer=self.gate_bias_regularizer,
+            linear_kernel_regularizer=self.linear_kernel_regularizer,
+            linear_activity_regularizer=self.linear_activity_regularizer,
+            linear_bias_regularizer=self.linear_bias_regularizer,
+        ))
+        return config
 
 
 class GatedResidualUnit(layers.Layer):
@@ -433,17 +508,31 @@ class GatedResidualUnit(layers.Layer):
         project_kernel_regularizer=None,
         project_activity_regularizer=None,
         project_bias_regularizer=None,
+        name="gated_residual_unit",
         **kwargs
     ):
-        super(GatedResidualUnit, self).__init__()
+        super(GatedResidualUnit, self).__init__(name=name, **kwargs)
         self.units = units
+        self.use_bias = use_bias
+        self.activation = activation
+        self.gate_kernel_regularizer = gate_kernel_regularizer
+        self.gate_activity_regularizer = gate_activity_regularizer
+        self.gate_bias_regularizer = gate_bias_regularizer
+        self.nonlinear_kernel_regularizer = nonlinear_kernel_regularizer
+        self.nonlinear_activity_regularizer = nonlinear_activity_regularizer
+        self.nonlinear_bias_regularizer = nonlinear_bias_regularizer
+        self.project_kernel_regularizer = project_kernel_regularizer
+        self.project_activity_regularizer = project_activity_regularizer
+        self.project_bias_regularizer = project_bias_regularizer
+
         self.nonlinear_dense = layers.Dense(
             units,
             use_bias=use_bias,
             activation=activation,
             kernel_regularizer=nonlinear_kernel_regularizer,
             activity_regularizer=nonlinear_activity_regularizer,
-            bias_regularizer=nonlinear_bias_regularizer
+            bias_regularizer=nonlinear_bias_regularizer,
+            name=f"{name}/nonlinear"
         )
 
         self.gate = layers.Dense(
@@ -453,17 +542,21 @@ class GatedResidualUnit(layers.Layer):
             kernel_regularizer=gate_kernel_regularizer,
             activity_regularizer=gate_activity_regularizer,
             bias_regularizer=gate_bias_regularizer,
-            bias_initializer=tf.keras.initializers.Constant(-3.)
+            bias_initializer=tf.keras.initializers.Constant(-3.),
+            name=f"{name}/gate"
         )
 
-        self.layer_norm = layers.BatchNormalization()
+        self.layer_norm = layers.BatchNormalization(
+            name=f"{name}/batchnormalization"
+        )
         self.project = layers.Dense(
             units,
             use_bias=use_bias,
             activation="linear",
             kernel_regularizer=project_kernel_regularizer,
             activity_regularizer=project_activity_regularizer,
-            bias_regularizer=project_bias_regularizer
+            bias_regularizer=project_bias_regularizer,
+            name="f{name}/project"
         )
         return
 
@@ -481,6 +574,24 @@ class GatedResidualUnit(layers.Layer):
         x = self.layer_norm(x)
         return x
 
+    def get_config(self):
+        config = super(GatedResidualUnit, self).get_config()
+        config.update(dict(
+            units=self.units,
+            use_bias=self.use_bias,
+            activation=activations.serialize(self.activation),
+            gate_kernel_regularizer=self.gate_kernel_regularizer,
+            gate_activity_regularizer=self.gate_activity_regularizer,
+            gate_bias_regularizer=self.gate_bias_regularizer,
+            nonlinear_kernel_regularizer=self.nonlinear_kernel_regularizer,
+            nonlinear_activity_regularizer=self.nonlinear_activity_regularizer,
+            nonlinear_bias_regularizer=self.nonlinear_bias_regularizer,
+            project_kernel_regularizer=self.project_kernel_regularizer,
+            project_activity_regularizer=self.project_activity_regularizer,
+            project_bias_regularizer=self.project_bias_regularizer,
+        ))
+        return config
+
 
 class ResidualUnit(layers.Layer):
 
@@ -496,29 +607,47 @@ class ResidualUnit(layers.Layer):
         gain_kernel_regularizer=None,
         gain_activity_regularizer=None,
         gain_bias_regularizer=None,
+        name="residual_unit",
         **kwargs
     ):
         super(ResidualUnit, self).__init__()
         self.units = units
+        self.dropout_rate = dropout_rate
+        self.activation = activation
+        self.use_bias = use_bias
+        self.nonlinear_kernel_regularizer = nonlinear_kernel_regularizer
+        self.nonlinear_activity_regularizer = nonlinear_activity_regularizer
+        self.nonlinear_bias_regularizer = nonlinear_bias_regularizer
+        self.gain_kernel_regularizer = gain_kernel_regularizer
+        self.gain_activity_regularizer = gain_activity_regularizer
+        self.gain_bias_regularizer = gain_bias_regularizer
+
         self.nonlinear_dense = layers.Dense(
             units,
             use_bias=use_bias,
             activation=activation,
             kernel_regularizer=nonlinear_kernel_regularizer,
             activity_regularizer=nonlinear_activity_regularizer,
-            bias_regularizer=nonlinear_bias_regularizer
+            bias_regularizer=nonlinear_bias_regularizer,
+            name=f"{name}/nonlinear",
         )
-        self.dropout = layers.Dropout(dropout_rate)
+        self.dropout = layers.Dropout(
+            dropout_rate,
+            name=f"{name}/dropout"
+        )
         self.gain_dense = layers.Dense(
             units,
             use_bias=use_bias,
             activation="linear",
             kernel_regularizer=gain_kernel_regularizer,
             activity_regularizer=gain_activity_regularizer,
-            bias_regularizer=gain_bias_regularizer
+            bias_regularizer=gain_bias_regularizer,
+            name=f"{name}/gain",
         )
 
-        self.layer_norm = layers.BatchNormalization()
+        self.layer_norm = layers.BatchNormalization(
+            name=f"{name}/batchnormalization",
+        )
         return
 
     def call(self, inputs, training=False):
@@ -534,6 +663,21 @@ class ResidualUnit(layers.Layer):
         x = nl + inputs
         x = self.layer_norm(x)
         return x
+
+    def get_config(self):
+        config = super(ResidualUnit, self).get_config()
+        config.update(dict(
+            units=self.units,
+            dropout_rate=self.dropout_rate,
+            activation=activations.serialize(self.activation),
+            use_bias=self.use_bias,
+            nonlinear_kernel_regularizer=self.nonlinear_kernel_regularizer,
+            nonlinear_activity_regularizer=self.nonlinear_activity_regularizer,
+            nonlinear_bias_regularizer=self.nonlinear_bias_regularizer,
+            gain_kernel_regularizer=self.gain_kernel_regularizer,
+            gain_activity_regularizer=self.gain_activity_regularizer,
+            gain_bias_regularizer=self.gain_bias_regularizer,
+        ))
 
 
 class ParallelResidualUnit(layers.Layer):
@@ -552,36 +696,58 @@ class ParallelResidualUnit(layers.Layer):
         linear_kernel_regularizer=None,
         linear_activity_regularizer=None,
         linear_bias_regularizer=None,
+        name="parallel_residual_unit",
         **kwargs
     ):
-        super(ParallelResidualUnit, self).__init__()
+        super(ParallelResidualUnit, self).__init__(name=name, **kwargs)
         self.units = units
+        self.dropout_rate = dropout_rate
+        self.activation = activation
+        self.use_bias = use_bias
+        self.nonlinear_kernel_regularizer = nonlinear_kernel_regularizer
+        self.nonlinear_activity_regularizer = nonlinear_activity_regularizer
+        self.nonlinear_bias_regularizer = nonlinear_bias_regularizer
+        self.linear_kernel_regularizer = linear_kernel_regularizer
+        self.linear_activity_regularizer = linear_activity_regularizer
+        self.linear_bias_regularizer = linear_bias_regularizer
+        self.gain_kernel_regularizer = gain_kernel_regularizer
+        self.gain_activity_regularizer = gain_activity_regularizer
+        self.gain_bias_regularizer = gain_bias_regularizer
+
         self.nonlinear_dense = layers.Dense(
             units,
             use_bias=use_bias,
             activation=activation,
             kernel_regularizer=nonlinear_kernel_regularizer,
             activity_regularizer=nonlinear_activity_regularizer,
-            bias_regularizer=nonlinear_bias_regularizer
+            bias_regularizer=nonlinear_bias_regularizer,
+            name=f"{name}/nonlinear",
         )
-        self.dropout = layers.Dropout(dropout_rate)
+        self.dropout = layers.Dropout(
+            dropout_rate,
+            name=f"{name}/dropout"
+        )
         self.gain_dense = layers.Dense(
             units,
             use_bias=use_bias,
             activation="linear",
             kernel_regularizer=gain_kernel_regularizer,
             activity_regularizer=gain_activity_regularizer,
-            bias_regularizer=gain_bias_regularizer
+            bias_regularizer=gain_bias_regularizer,
+            name=f"{name}/gain",
         )
 
-        self.layer_norm = layers.BatchNormalization()
+        self.layer_norm = layers.BatchNormalization(
+            name=f"{name}/batchnormalization"
+        )
         self.linear_dense = layers.Dense(
             units,
             use_bias=use_bias,
             activation="linear",
             kernel_regularizer=linear_kernel_regularizer,
             activity_regularizer=linear_activity_regularizer,
-            bias_regularizer=linear_bias_regularizer
+            bias_regularizer=linear_bias_regularizer,
+            name=f"{name}/linear"
         )
         return
 
@@ -594,6 +760,24 @@ class ParallelResidualUnit(layers.Layer):
         x = nl + li
         x = self.layer_norm(x)
         return x
+
+    def get_config(self):
+        config = super(ParallelResidualUnit, self).get_config()
+        config.update(dict(
+            units=self.units,
+            dropout_rate=self.dropout_rate,
+            activation=activations.serialize(self.activation),
+            use_bias=self.use_bias,
+            nonlinear_kernel_regularizer=self.nonlinear_kernel_regularizer,
+            nonlinear_activity_regularizer=self.nonlinear_activity_regularizer,
+            nonlinear_bias_regularizer=self.nonlinear_bias_regularizer,
+            linear_kernel_regularizer=self.linear_kernel_regularizer,
+            linear_activity_regularizer=self.linear_activity_regularizer,
+            linear_bias_regularizer=self.linear_bias_regularizer,
+            gain_kernel_regularizer=self.gain_kernel_regularizer,
+            gain_activity_regularizer=self.gain_activity_regularizer,
+            gain_bias_regularizer=self.gain_bias_regularizer,
+        ))
 
 
 class ParallelUnit(layers.Layer):
@@ -612,38 +796,62 @@ class ParallelUnit(layers.Layer):
         linear_kernel_regularizer=None,
         linear_activity_regularizer=None,
         linear_bias_regularizer=None,
+        name="parallel_unit",
         **kwargs
     ):
-        super(ParallelUnit, self).__init__()
+        super(ParallelUnit, self).__init__(name=name, **kwargs)
         self.units = units
+        self.dropout_rate = dropout_rate
+        self.activation = activation
+        self.use_bias = use_bias
+        self.nonlinear_kernel_regularizer = nonlinear_kernel_regularizer
+        self.nonlinear_activity_regularizer = nonlinear_activity_regularizer
+        self.nonlinear_bias_regularizer = nonlinear_bias_regularizer
+        self.linear_kernel_regularizer = linear_kernel_regularizer
+        self.linear_activity_regularizer = linear_activity_regularizer
+        self.linear_bias_regularizer = linear_bias_regularizer
+        self.gain_kernel_regularizer = gain_kernel_regularizer
+        self.gain_activity_regularizer = gain_activity_regularizer
+        self.gain_bias_regularizer = gain_bias_regularizer
+
         self.nonlinear_dense = layers.Dense(
             units,
             use_bias=use_bias,
             activation=activation,
             kernel_regularizer=nonlinear_kernel_regularizer,
             activity_regularizer=nonlinear_activity_regularizer,
-            bias_regularizer=nonlinear_bias_regularizer
+            bias_regularizer=nonlinear_bias_regularizer,
+            name=f"{name}/nonlinear"
         )
-        self.dropout = layers.Dropout(dropout_rate)
+        self.dropout = layers.Dropout(
+            dropout_rate,
+            name=f"{name}/dropout"
+        )
         self.gain_dense = layers.Dense(
             units,
             use_bias=use_bias,
             activation="linear",
             kernel_regularizer=gain_kernel_regularizer,
             activity_regularizer=gain_activity_regularizer,
-            bias_regularizer=gain_bias_regularizer
+            bias_regularizer=gain_bias_regularizer,
+            name=f"{name}/gain"
         )
 
-        self.layer_norm = layers.BatchNormalization()
+        self.layer_norm = layers.BatchNormalization(
+            name=f"{name}/batchnormalization"
+        )
         self.linear_dense = layers.Dense(
             units,
             use_bias=use_bias,
             activation="linear",
             kernel_regularizer=linear_kernel_regularizer,
             activity_regularizer=linear_activity_regularizer,
-            bias_regularizer=linear_bias_regularizer
+            bias_regularizer=linear_bias_regularizer,
+            name=f"{name}/linear"
         )
-        self.concat = layers.Concatenate()
+        self.concat = layers.Concatenate(
+            name=f"{name}/concatenate"
+        )
         return
 
     def call(self, inputs, training=False):
@@ -655,3 +863,21 @@ class ParallelUnit(layers.Layer):
         x = self.concat([nl, li])
         x = self.layer_norm(x)
         return x
+
+    def get_config(self):
+        config = super(ParallelUnit, self).get_config()
+        config.update(dict(
+            units=self.units,
+            dropout_rate=self.dropout_rate,
+            activation=activations.serialize(self.activation),
+            use_bias=self.use_bias,
+            nonlinear_kernel_regularizer=self.nonlinear_kernel_regularizer,
+            nonlinear_activity_regularizer=self.nonlinear_activity_regularizer,
+            nonlinear_bias_regularizer=self.nonlinear_bias_regularizer,
+            linear_kernel_regularizer=self.linear_kernel_regularizer,
+            linear_activity_regularizer=self.linear_activity_regularizer,
+            linear_bias_regularizer=self.linear_bias_regularizer,
+            gain_kernel_regularizer=self.gain_kernel_regularizer,
+            gain_activity_regularizer=self.gain_activity_regularizer,
+            gain_bias_regularizer=self.gain_bias_regularizer,
+        ))

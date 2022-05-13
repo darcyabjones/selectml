@@ -136,6 +136,69 @@ def _masked_minimum(data, mask, dim=1):
     return masked_minimums
 
 
+class SD(tf.keras.metrics.Metric):
+
+    def __init__(self, name="standard_deviation", **kwargs):
+        super(SD, self).__init__(name=name, **kwargs)
+
+        self.squared_difference = self.add_weight(
+            name="squared_difference",
+            initializer="zeros"
+        )
+
+        self.n_samples = self.add_weight(
+            name="n_samples",
+            initializer="zeros"
+        )
+
+        self.n_minibatches = self.add_weight(
+            name="n_minibatches",
+            initializer="zeros"
+        )
+
+        self.sum = self.add_weight(
+            name="sum",
+            initializer="zeros"
+        )
+
+        return
+
+    def update_state(
+        self,
+        y_true,
+        y_pred,
+        sample_weight=None,
+    ):
+        # Using formula from here:
+        # https://www.statology.org/averaging-standard-deviations/
+        # I found that simply taking sqrt(mean(variances)) gave a slightly
+        # biased result. This seems to converge to good estimate quickly.
+
+        y_true = tf.cast(y_true, self.dtype)
+        # y_pred is ignored
+
+        minibatch_size = tf.cast(tf.size(y_true), self.dtype)
+
+        self.sum.assign_add(tf.math.reduce_sum(y_true))
+        self.n_samples.assign_add(minibatch_size)
+        self.n_minibatches.assign_add(1.0)
+        mean = self.sum / self.n_samples
+
+        diffs = tf.reduce_sum(
+            tf.math.squared_difference(y_true, mean)
+        )
+        sample_diffs = (minibatch_size - 1) * (diffs / minibatch_size)
+        self.squared_difference.assign_add(sample_diffs)
+        return
+
+    def result(self):
+        variance = (
+            self.squared_difference /
+            (self.n_samples - self.n_minibatches)
+        )
+        return tf.sqrt(variance)
+
+
 class RankLoss(tf.keras.losses.Loss):
 
     def __init__(
@@ -183,7 +246,6 @@ class MultiSURFTripletLoss(tf.keras.losses.Loss):
 
     def __init__(
         self,
-        sd,
         margin=1.0,
         distance_metric="L2",
         reduction=tf.keras.losses.Reduction.AUTO,
@@ -191,19 +253,22 @@ class MultiSURFTripletLoss(tf.keras.losses.Loss):
         **kwargs
     ):
         super().__init__(reduction=reduction, name=name)
-        self.sd = sd
         self.margin = margin
         self.distance_metric = distance_metric
+
+        self.sd = SD()
         return
 
     @tf.function
     def response_diffs(self, y):
         diffs = tf.math.subtract(y, tf.transpose(y))
-        diffs = tf.abs(diffs) < self.sd
+        diffs = tf.abs(diffs) < self.sd.result()
         return diffs  # tf.cast(diffs, tf.dtypes.float32)
 
     def call(self, y_true, y_pred):
         from tensorflow_addons.losses import metric_learning
+
+        self.sd.update_state(y_true, y_pred)
 
         labels = tf.cast(
             tf.convert_to_tensor(y_true, name="labels"),
@@ -300,7 +365,6 @@ class SemiHardTripletLoss(tf.keras.losses.Loss):
 
     def __init__(
         self,
-        sd,
         margin=1.0,
         distance_metric="L2",
         reduction=tf.keras.losses.Reduction.AUTO,
@@ -308,7 +372,7 @@ class SemiHardTripletLoss(tf.keras.losses.Loss):
         **kwargs
     ):
         super().__init__(reduction=reduction, name=name)
-        self.sd = sd
+        self.sd = SD()
         self.margin = margin
         self.distance_metric = distance_metric
         return
@@ -316,11 +380,13 @@ class SemiHardTripletLoss(tf.keras.losses.Loss):
     @tf.function
     def response_diffs(self, y):
         diffs = tf.math.subtract(y, tf.transpose(y))
-        diffs = tf.abs(diffs) < self.sd
+        diffs = tf.abs(diffs) < self.sd.result()
         return diffs  # tf.cast(diffs, tf.dtypes.float32)
 
     def call(self, y_true, y_pred):
         from tensorflow_addons.losses import metric_learning
+
+        self.sd.update_state(y_true, y_pred)
 
         labels = tf.cast(
             tf.convert_to_tensor(y_true, name="labels"),
@@ -450,7 +516,6 @@ class HardTripletLoss(tf.keras.losses.Loss):
 
     def __init__(
         self,
-        sd,
         soft=False,
         margin=1.0,
         distance_metric="L2",
@@ -459,7 +524,7 @@ class HardTripletLoss(tf.keras.losses.Loss):
         **kwargs
     ):
         super().__init__(reduction=reduction, name=name)
-        self.sd = sd
+        self.sd = SD()
         self.margin = margin
         self.distance_metric = distance_metric
         self.soft = soft
@@ -468,11 +533,13 @@ class HardTripletLoss(tf.keras.losses.Loss):
     @tf.function
     def response_diffs(self, y):
         diffs = tf.math.subtract(y, tf.transpose(y))
-        diffs = tf.abs(diffs) < self.sd
+        diffs = tf.abs(diffs) < self.sd.result()
         return diffs  # tf.cast(diffs, tf.dtypes.float32)
 
     def call(self, y_true, y_pred):
         from tensorflow_addons.losses import metric_learning
+
+        self.sd.update_state(y_true, y_pred)
 
         labels = tf.cast(
             tf.convert_to_tensor(y_true, name="labels"),
