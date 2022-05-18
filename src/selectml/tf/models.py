@@ -266,19 +266,32 @@ class ConvMLP(tf.keras.models.Model):
             )
         return embed_units[0]
 
-    def build(self, input_shape):
+    def build(self, input_shape):  # noqa
         from tensorflow.keras.layers import Concatenate, Add
-
-        # I don't love this but it's my only way I think
-        # markers = input_shape[0]
-        # dists = input_shape[1]
-        # groups = input_shape[2]
-        # covariates = input_shape[3]
 
         markers = input_shape.get("markers", None)
         dists = input_shape.get("dists", None)
         groups = input_shape.get("groups", None)
         covariates = input_shape.get("covariates", None)
+
+        self.drop_markers = markers is None
+        self.drop_dists = dists is None
+        self.drop_groups = groups is None
+        self.drop_covariates = covariates is None
+
+        if markers is None:
+            self.conv_nlayers = 0
+            self.adaptive_l1 = False
+            self.marker_embed_nlayers = 0
+
+        if dists is None:
+            self.dist_embed_nlayers = 0
+
+        if groups is None:
+            self.group_embed_nlayers = 0
+
+        if covariates is None:
+            self.covariate_embed_nlayers = 0
 
         if self.combine_method != "concatenate":
             embed_units = self._check_all_same_final_units(
@@ -436,7 +449,7 @@ class ConvMLP(tf.keras.models.Model):
         layers = []
         for i in range(embed_nlayers):
             dr = embed_0_dropout_rate if (i == 0) else embed_1_dropout_rate
-            layers.append(Dropout(dr, name=f"{self.name}/{name}/dropout:{i}"))
+            layers.append(Dropout(dr, name=f"{self.name}/{name}/dropout.{i}"))
 
             l1 = embed_0_l1_rate if (i == 0) else embed_1_l1_rate
             l2 = embed_0_l2_rate if (i == 0) else embed_1_l2_rate
@@ -471,7 +484,7 @@ class ConvMLP(tf.keras.models.Model):
                     nonlinear_kernel_regularizer=reg,
                     gain_kernel_regularizer=reg,
                     linear_kernel_regularizer=reg,
-                    name=f"{self.name}/{name}/{type_name}:{i}"
+                    name=f"{self.name}/{name}/{type_name}.{i}"
                 ))
             else:
                 layers.append(Dense(
@@ -479,17 +492,17 @@ class ConvMLP(tf.keras.models.Model):
                     activation="linear",
                     kernel_regularizer=reg,
                     use_bias=True,
-                    name=f"{self.name}/{name}/dense:{i}"
+                    name=f"{self.name}/{name}/dense.{i}"
                 ))
                 layers.append(BatchNormalization(
-                    name=f"{self.name}/{name}/batchnormalization:{i}"
+                    name=f"{self.name}/{name}/batchnormalization.{i}"
                 ))
 
                 # The current trend seems to be to do activation after
                 # batch/layer norm. This might change in future.
                 if embed_activation == "relu":
                     layers.append(ReLU(
-                        name=f"{self.name}/{name}/relu:{i}"
+                        name=f"{self.name}/{name}/relu.{i}"
                     ))
         return layers
 
@@ -568,7 +581,6 @@ class ConvMLP(tf.keras.models.Model):
 
         return X
 
-    @tf.function
     def get_combined_output(
         self,
         markers,
@@ -610,6 +622,8 @@ class ConvMLP(tf.keras.models.Model):
 
     @tf.function
     def long_call(self, inputs, training=False):
+        from selectml.higher import fmap
+
         # Since we call this function directly in train_step,
         # we need to "build" the model by calling __call__
         if not self.built:
@@ -622,15 +636,33 @@ class ConvMLP(tf.keras.models.Model):
         dists = inputs.get("dists", None)
         groups = inputs.get("groups", None)
         covariates = inputs.get("covariates", None)
-        # markers = inputs[0]
-        # dists = inputs[1]
-        # groups = inputs[2]
-        # covariates = inputs[3]
 
-        markers = self.get_marker_embed_output(markers, training=training)
-        dists = self.get_dist_embed_output(dists, training=training)
-        groups = self.get_dist_embed_output(dists, training=training)
-        covariates = self.get_dist_embed_output(dists, training=training)
+        if self.drop_markers:
+            markers = None
+
+        if self.drop_dists:
+            dists = None
+
+        if self.drop_groups:
+            groups is None
+
+        if self.drop_covariates:
+            covariates is None
+
+        # Fmaps are necessary to avoid converting None to a tensorflow
+        # placeholder type.
+        markers = fmap(
+            self.get_marker_embed_output,
+            markers,
+            training=training
+        )
+        dists = fmap(self.get_dist_embed_output, dists, training=training)
+        groups = fmap(self.get_group_embed_output, groups, training=training)
+        covariates = fmap(
+            self.get_covariate_embed_output,
+            covariates,
+            training=training
+        )
 
         combined = self.get_combined_output(
             markers,

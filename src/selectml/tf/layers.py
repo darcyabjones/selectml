@@ -379,7 +379,7 @@ class ConvLinkage(layers.Layer):
             if (dropout_rate is not None) and (i > 0):
                 self.layers.append(layers.Dropout(
                     dropout_rate,
-                    name=f"{name}/dropout:{i}"
+                    name=f"{name}/dropout.{i}"
                 ))
 
             layer = layers.Conv1D(
@@ -391,13 +391,13 @@ class ConvLinkage(layers.Layer):
                 activity_regularizer=activity_regularizer,
                 bias_regularizer=bias_regularizer,
                 activation=act,
-                name=f"{name}/conv1d:{i}"
+                name=f"{name}/conv1d.{i}"
             )
 
             self.layers.append(layer)
             if use_bn:
                 self.layers.append(layers.BatchNormalization(
-                    name=f"{name}/batchnormalization:{i}"
+                    name=f"{name}/batchnormalization.{i}"
                 ))
         return
 

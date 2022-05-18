@@ -1,7 +1,7 @@
 """ Some higher order functions for dealing with static analysis. """
 
 from typing import cast
-from typing import TypeVar
+from typing import TypeVar, ParamSpec, Concatenate
 from typing import Optional
 from typing import Callable
 from typing import Union
@@ -13,6 +13,7 @@ from typing import Generic
 T = TypeVar("T")
 U = TypeVar("U")
 V = TypeVar("V")
+P = ParamSpec("P")
 
 
 def collect_optional(li: List[Optional[T]]) -> Optional[List[T]]:
@@ -22,11 +23,16 @@ def collect_optional(li: List[Optional[T]]) -> Optional[List[T]]:
         return cast("List[T]", li)
 
 
-def fmap(function: Callable[[T], U], option: Optional[T]) -> Optional[U]:
+def fmap(
+    function: Callable[Concatenate[T, P], U],
+    option: Optional[T],
+    *args: P.args,
+    **kwargs: P.kwargs
+) -> Optional[U]:
     if option is None:
         return None
     else:
-        return function(option)
+        return function(option, *args, **kwargs)
 
 
 def fmap2(

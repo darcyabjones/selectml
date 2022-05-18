@@ -27,6 +27,7 @@ import ngboost
 from selectml.sk import preprocessor
 from selectml.sk import distance
 from selectml.sk import feature_selection
+from selectml.tf import wrapper as tfmodels
 
 
 class XGBStep(Step):
@@ -188,6 +189,20 @@ Lars = make_step(
     class_name="Lars"
 )
 
+ConvMLPClassifier = make_step(
+    tfmodels.ConvMLPClassifier,
+    class_name="ConvMLPClassifier"
+)
+
+ConvMLPRegressor = make_step(
+    tfmodels.ConvMLPRegressor,
+    class_name="ConvMLPRegressor"
+)
+
+ConvMLPRanker = make_step(
+    tfmodels.ConvMLPRanker,
+    class_name="ConvMLPRanker"
+)
 
 Nystroem = make_step(
     kernel_approximation.Nystroem,

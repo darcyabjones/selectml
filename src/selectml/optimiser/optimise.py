@@ -2325,3 +2325,84 @@ class OptimiseLars(OptimiseSK):
             }
             out.append(d)
         return out
+
+
+class ConvMLP(OptimiseSK):
+
+    def __init__(
+        self,
+        task: "Literal['regression', 'ranking', 'classification']",
+        seed: "Optional[int]" = None,
+        name: str = "lars",
+    ):
+        self.task = task
+        self.rng = random.Random(seed)
+        self.name = name
+        return
+
+    def sample_params(
+        self,
+        trial: "optuna.Trial",
+        nsamples: int,
+        nfeatures: int,
+        **kwargs
+    ) -> "Params":
+        if self.task == "regression":
+            loss_options = ["mse", "mae"]
+        elif self.task == "ranking":
+            loss_options = ["pairwise", "mae", "mse", "binary_crossentropy"]
+        elif self.task == "classification":
+            loss_options = ["binary_crossentropy"]
+        else:
+            raise ValueError("")
+
+        params = {}
+        params[f"{self.name}_loss"] = trial.suggest_categorical(
+            f"{self.name}_loss",
+            loss_options
+        )
+
+        conv_nlayers = trial.suggest_int(
+            f"{self.name}_conv_nlayers",
+            0,
+            3
+        )
+
+        if conv_nlayers > 0:
+            pass
+
+
+        """f"{self.name}_jitter": trial.suggest_float(
+            f"{self.name}_jitter",
+            1e-20,
+            1,
+            log=True
+        )"""
+        return params
+
+    def model(
+        self,
+        params: "Params",
+        **kwargs
+    ) -> "Optional[Model]":
+        from .wrapper import Lars
+
+        model = Lars(
+            fit_intercept=params[f"{self.name}_fit_intercept"],
+            jitter=params.get(f"{self.name}_jitter", 0.0),
+            n_nonzero_coefs=params.get(f"{self.name}_n_nonzero_coefs", 500),
+            random_state=self.rng.getrandbits(32),
+        )
+        return model
+
+    def starting_points(self) -> "List[Params]":
+        out: "List[Params]" = []
+
+        for i in [50, 100, 500, 1000]:
+            d: "Params" = {
+                f"{self.name}_fit_intercept": True,
+                f"{self.name}_n_nonzero_coefs": i,
+                f"{self.name}_jitter": 0,
+            }
+            out.append(d)
+        return out
