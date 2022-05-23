@@ -8,7 +8,6 @@ from contextlib import contextmanager
 from collections import defaultdict
 
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
-from baikal.steps import Step
 
 import numpy as np
 from sklearn.utils.multiclass import type_of_target
@@ -25,12 +24,14 @@ from tensorflow.keras.losses import get as keras_loss_get
 from tensorflow.keras.metrics import get as keras_metric_get
 
 from typing import TYPE_CHECKING
+from typing import cast
 if TYPE_CHECKING:
     from typing import Dict, List, Sequence, Tuple
     from typing import Optional, Union, Any
     from typing import Type
     from typing import Callable
     from typing import Iterable, Generator
+    from typing import Literal
     import numpy.typing as npt
 
 DIGITS = frozenset(str(i) for i in range(10))
@@ -333,7 +334,7 @@ class TFBase(BaseEstimator):
         metrics: "Union[List[Union[str, tf.keras.metrics.Metric, Type[tf.keras.metrics.Metric], Callable, str, None]]]" = None,  # noqa: E501
         batch_size: "Union[int, None]" = None,
         validation_batch_size: "Union[int, None]" = None,
-        verbose: int = 1,
+        verbose: int = 0,
         callbacks: "Optional[List[Union[tf.keras.callbacks.Callback, Type[tf.keras.callbacks.Callback]]]]" = None,  # noqa: E501
         validation_split: float = 0.0,
         shuffle: bool = True,
@@ -453,7 +454,7 @@ class TFBase(BaseEstimator):
             pass_filter=self._compile_kwargs,
         )
         compile_kwargs["optimizer"] = self.try_to_convert_strings_to_classes(
-            compile_kwargs["optimizer"],
+            self.optimizer,
             self.get_optimizer_class
         )
         compile_kwargs["optimizer"] = self.unflatten_params(
@@ -479,7 +480,7 @@ class TFBase(BaseEstimator):
             ),
         )
         compile_kwargs["metrics"] = self.try_to_convert_strings_to_classes(
-            compile_kwargs["metrics"],
+            compile_kwargs.get("metrics", None),
             self.get_metric_class
         )
         compile_kwargs["metrics"] = self.unflatten_params(
@@ -864,6 +865,7 @@ class TFBase(BaseEstimator):
             in fit_args.items()
             if not k.startswith("callbacks")
         }
+        fit_args["verbose"] = self.verbose
         fit_args["callbacks"] = self._fit_callbacks
 
         if self._random_state is not None:
@@ -998,10 +1000,10 @@ class TFBase(BaseEstimator):
             target_type: "Union[str, List[str], Dict[str, str]]" = [
                 self._type_of_target(yi) for yi in y_
             ]
-            y_dtype_: "Union[List[np.dtype], Dict[str, np.dtype], np.dtype]" = [
+            y_dtype_: "Union[List[np.dtype], Dict[str, np.dtype], np.dtype]" = [  # noqa: E501
                 yi.dtype for yi in y_
             ]
-            y_ndim_: "Union[List[int], Dict[str, int], int]" = [yi.ndim for yi in y_]
+            y_ndim_: "Union[List[int], Dict[str, int], int]" = [yi.ndim for yi in y_]  # noqa: E501
         elif multi_output and isinstance(y, dict):
             y_ = {k: _check_y_array(yi) for k, yi in y.items()}
 
@@ -1115,13 +1117,13 @@ class TFBase(BaseEstimator):
                     "The X-arrays have different numbers of samples."
                 )
 
-            X_dtype_: "Union[List[np.dtype], Dict[str, np.dtype], np.dtype]" = [
+            X_dtype_: "Union[List[np.dtype], Dict[str, np.dtype], np.dtype]" = [  # noqa: E501
                 xi.dtype for xi in X_
             ]
             n_features_in_: "Union[int, List[int], Dict[str, int]]" = [
                 xi.shape[1] for xi in X_
             ]
-            X_shape_: "Union[List[Tuple[int, ...]], Dict[str, Tuple[int, ...]], Tuple[int, ...]]" = [
+            X_shape_: "Union[List[Tuple[int, ...]], Dict[str, Tuple[int, ...]], Tuple[int, ...]]" = [  # noqa: E501
                 xi.shape for xi in X_
             ]
         elif multi_input and isinstance(X, dict):
@@ -1149,22 +1151,37 @@ class TFBase(BaseEstimator):
             self.n_features_in_ = n_features_in_
 
         elif multi_input:
-            if isinstance(X_, dict):
+            isdict = isinstance(X_, dict)
+
+            if isdict:
+                assert isinstance(X_, dict)
                 keys: "Iterable[Union[int, str]]" = X_.keys()
             else:
+                assert isinstance(X_, list)
                 keys = range(len(X_))
 
-            assert isinstance(X_dtype_, (list, dict))
-            assert isinstance(X_shape_, (list, dict))
-            assert isinstance(self.X_dtype_, (list, dict))
-            assert isinstance(self.X_shape_, (list, dict))
-
-
             for k in keys:
-                xi_dtype_ = X_dtype_[k]
-                dtype_ = self.X_dtype_[k]
-                xi_shape_ = X_shape_[k]
-                shape_ = self.X_shape_[k]
+                if isdict:
+                    assert isinstance(k, str)
+                    assert isinstance(X_dtype_, dict)
+                    assert isinstance(X_shape_, dict)
+                    assert isinstance(self.X_dtype_, dict)
+                    assert isinstance(self.X_shape_, dict)
+                    xi_dtype_ = cast("Dict", X_dtype_)[k]
+                    dtype_ = cast("Dict", self.X_dtype_)[k]
+                    xi_shape_ = cast("Dict", X_shape_)[k]
+                    shape_ = cast("Dict", self.X_shape_)[k]
+                else:
+                    assert isinstance(k, int)
+                    assert isinstance(X_dtype_, list)
+                    assert isinstance(X_shape_, list)
+                    assert isinstance(self.X_dtype_, list)
+                    assert isinstance(self.X_shape_, list)
+                    xi_dtype_ = cast("List", X_dtype_)[k]
+                    dtype_ = cast("List", self.X_dtype_)[k]
+                    xi_shape_ = cast("List", X_shape_)[k]
+                    shape_ = cast("List", self.X_shape_)[k]
+
                 assert isinstance(xi_dtype_, np.dtype)
                 assert isinstance(dtype_, np.dtype)
                 if not np.can_cast(xi_dtype_, dtype_):
@@ -1188,7 +1205,7 @@ class TFBase(BaseEstimator):
                     )
         else:
             assert isinstance(X_dtype_, np.dtype)
-            assert isinstance(self.X_dtype_, np.dtype)
+            assert isinstance(self.X_dtype_, np.dtype), self.X_dtype_
             if not np.can_cast(X_dtype_, self.X_dtype_):
                 raise ValueError(
                     f"Got X with dtype {X_dtype_},"
@@ -1798,6 +1815,7 @@ class TFBase(BaseEstimator):
                     ) from None
         return self
 
+    '''
     def _get_param_names(self):
         """Get parameter names for the estimator"""
         return (
@@ -1805,6 +1823,7 @@ class TFBase(BaseEstimator):
             in self.__dict__
             if not k.endswith("_") and not k.startswith("_")
         )
+    '''
 
     def _more_tags(self):
         """Get sklearn tags for the estimator"""
@@ -1828,7 +1847,7 @@ class ConvMLPWrapper(TFBase):
 
     def __init__(
         self,
-        loss: "Literal[None, 'mse', 'mae', 'binary_crossentropy', 'pairwise']" = None,
+        loss: "Literal[None, 'mse', 'mae', 'binary_crossentropy', 'pairwise']" = None,  # noqa: E501
         optimizer="adam",
         optimizer__learning_rate=0.001,
         epochs=200,
@@ -1908,6 +1927,7 @@ class ConvMLPWrapper(TFBase):
         hard_triplet_loss_rate: "Optional[float]" = None,
         semihard_triplet_loss_rate: "Optional[float]" = None,
         multisurf_loss_rate: "Optional[float]" = None,
+        input_names: "Optional[List[Literal['markers', 'dists', 'groups', 'covariates']]]" = None,  # noqa: E501
         name="conv_mlp",
         **kwargs
     ):
@@ -1995,6 +2015,7 @@ class ConvMLPWrapper(TFBase):
         self.hard_triplet_loss_rate = hard_triplet_loss_rate
         self.semihard_triplet_loss_rate = semihard_triplet_loss_rate
         self.multisurf_loss_rate = multisurf_loss_rate
+        self.input_names = input_names
         return
 
     def _keras_build_fn(self, compile_kwargs: "Dict[str, Any]"):
@@ -2027,9 +2048,11 @@ class ConvMLPWrapper(TFBase):
             )
 
         if self.loss == "binary_crossentropy":
-            activation = "sigmoid"
+            activation: "Literal['sigmoid', 'linear', 'softmax']" = "sigmoid"
         else:
             activation = "linear"
+
+        assert activation in ("sigmoid", "linear", "softmax")
 
         model = ConvMLP(
             predictor_nunits=n_output_units,
@@ -2109,26 +2132,35 @@ class ConvMLPWrapper(TFBase):
             hard_triplet_loss_rate=self.hard_triplet_loss_rate,
             semihard_triplet_loss_rate=self.semihard_triplet_loss_rate,
             multisurf_loss_rate=self.multisurf_loss_rate,
+            input_names=self.input_names,
         )
 
-        model.compile(loss=loss, optimizer=compile_kwargs.get("optimizer", "adam"))
+        model.compile(
+            loss=loss,
+            optimizer=compile_kwargs.get("optimizer", "adam")
+        )
         model.optimizer.learning_rate.assign(self.optimizer__learning_rate)
         return model
 
 
-def ConvMLPClassifier(ConvMLPWrapper, ClassifierMixin):
+class ConvMLPClassifier(ConvMLPWrapper, ClassifierMixin):
 
-    def __init__(self, loss="binary_crossentropy", name="conv_mlp_classifier", **kwargs):
+    def __init__(
+        self,
+        loss="binary_crossentropy",
+        name="conv_mlp_classifier",
+        **kwargs
+    ):
         super().__init__(loss=loss, name=name, **kwargs)
 
 
-def ConvMLPRegressor(ConvMLPWrapper, RegressorMixin):
+class ConvMLPRegressor(ConvMLPWrapper, RegressorMixin):
 
     def __init__(self, loss="mse", name="conv_mlp_regressor", **kwargs):
         super().__init__(loss=loss, name=name, **kwargs)
 
 
-def ConvMLPRanker(ConvMLPWrapper):
+class ConvMLPRanker(ConvMLPWrapper):
 
     _estimator_type = "ranker"
 

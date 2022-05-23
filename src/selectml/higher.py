@@ -36,43 +36,49 @@ def fmap(
 
 
 def fmap2(
-    function: Callable[[T, Optional[V]], U],
+    function: Callable[Concatenate[T, Optional[V], P], U],
     option1: Optional[T],
     option2: Optional[V],
+    *args: P.args,
+    **kwargs: P.kwargs
 ) -> Optional[U]:
     if option1 is None:
         return None
     elif option2 is None:
-        return function(option1, None)
+        return function(option1, None, *args, **kwargs)
     else:
-        return function(option1, option2)
+        return function(option1, option2, *args, **kwargs)
 
 
 def ffmap(
-    function: Optional[Callable[[T], U]],
-    option: Optional[T]
+    function: Optional[Callable[Concatenate[T, P], U]],
+    option: Optional[T],
+    *args: P.args,
+    **kwargs: P.kwargs
 ) -> Optional[U]:
     if option is None:
         return None
     elif function is None:
         return None
     else:
-        return function(option)
+        return function(option, *args, **kwargs)
 
 
 def ffmap2(
-    function: Optional[Callable[[T, Optional[V]], U]],
+    function: Optional[Callable[Concatenate[T, Optional[V], P], U]],
     option1: Optional[T],
     option2: Optional[V],
+    *args: P.args,
+    **kwargs: P.kwargs
 ) -> Optional[U]:
     if function is None:
         return None
     elif option1 is None:
         return None
     elif option2 is None:
-        return function(option1, None)
+        return function(option1, None, *args, **kwargs)
     else:
-        return function(option1, option2)
+        return function(option1, option2, *args, **kwargs)
 
 
 def applicative(

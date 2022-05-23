@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Optional
     from typing import Literal
+    from typing import List
 
 import tensorflow as tf
 
@@ -93,6 +94,7 @@ class ConvMLP(tf.keras.models.Model):
         hard_triplet_loss_rate: "Optional[float]" = None,
         semihard_triplet_loss_rate: "Optional[float]" = None,
         multisurf_loss_rate: "Optional[float]" = None,
+        input_names: "Optional[List[Literal['markers', 'dists', 'groups', 'covariates']]]" = None,  # noqa: E501
         name="conv_mlp",
         **kwargs
     ):
@@ -177,9 +179,29 @@ class ConvMLP(tf.keras.models.Model):
         self.multisurf_loss_rate = multisurf_loss_rate
 
         self._get_custom_losses()
+        self.input_names = input_names
 
         self.built = False
         return
+
+    def _get_input_names(
+        self
+    ) -> "List[Literal['markers', 'dists', 'groups', 'covariates']]":
+        if self.input_names is not None:
+            return self.input_names
+
+        input_names: "List[Literal['markers', 'dists', 'groups', 'covariates']]" = ['markers']  # noqa
+
+        if self.dist_embed_nlayers > 0:
+            input_names.append('dists')
+
+        if self.group_embed_nlayers > 0:
+            input_names.append('groups')
+
+        if self.covariate_embed_nlayers > 0:
+            input_names.append('covariates')
+
+        return input_names
 
     def _get_custom_losses(self):
         self.semihard_triplet_loss = SemiHardTripletLoss(
@@ -269,10 +291,36 @@ class ConvMLP(tf.keras.models.Model):
     def build(self, input_shape):  # noqa
         from tensorflow.keras.layers import Concatenate, Add
 
-        markers = input_shape.get("markers", None)
-        dists = input_shape.get("dists", None)
-        groups = input_shape.get("groups", None)
-        covariates = input_shape.get("covariates", None)
+        if isinstance(input_shape, dict):
+            markers = input_shape.get("markers", None)
+            dists = input_shape.get("dists", None)
+            groups = input_shape.get("groups", None)
+            covariates = input_shape.get("covariates", None)
+        elif isinstance(input_shape, (list, tuple)):
+            markers = None
+            dists = None
+            groups = None
+            covariates = None
+
+            for name, shape in zip(self._get_input_names(), input_shape):
+                if name == 'markers':
+                    markers = shape
+                elif name == 'dists':
+                    dists = shape
+                elif name == 'groups':
+                    groups = shape
+                elif name == 'covariates':
+                    covariates = shape
+                else:
+                    raise ValueError("Got invalid input")
+        else:
+            markers = input_shape
+            dists = None
+            groups = None
+            covariates = None
+
+        if all(k is None for k in [markers, dists, groups, covariates]):
+            raise ValueError('received no input')
 
         self.drop_markers = markers is None
         self.drop_dists = dists is None
@@ -355,6 +403,7 @@ class ConvMLP(tf.keras.models.Model):
 
     def _prep_conv(self, name="conv"):
         from tensorflow.keras.regularizers import L1, L2, L1L2
+        from tensorflow.keras.layers import MaxPooling1D
         from selectml.tf.layers import (
             AddChannel,
             Flatten1D,
@@ -386,6 +435,7 @@ class ConvMLP(tf.keras.models.Model):
                     use_bn=self.conv_use_batchnorm,
                     name=f"{self.name}/{name}/convlinkage"
                 ),
+                MaxPooling1D(pool_size=1, name=f"{self.name}/{name}/maxpool"),
                 Flatten1D(name=f"{self.name}/{name}/flatten1d"),
             ])
 
@@ -447,6 +497,7 @@ class ConvMLP(tf.keras.models.Model):
             embed_final_nunits_ = embed_final_nunits
 
         layers = []
+        nunits_prev = 0
         for i in range(embed_nlayers):
             dr = embed_0_dropout_rate if (i == 0) else embed_1_dropout_rate
             layers.append(Dropout(dr, name=f"{self.name}/{name}/dropout.{i}"))
@@ -469,7 +520,7 @@ class ConvMLP(tf.keras.models.Model):
                 nunits = embed_nunits
 
             if embed_residual:
-                if i == 0:
+                if nunits != nunits_prev:
                     type_ = ParallelResidualUnit
                     type_name = "parallel_residual_unit"
                 else:
@@ -504,6 +555,7 @@ class ConvMLP(tf.keras.models.Model):
                     layers.append(ReLU(
                         name=f"{self.name}/{name}/relu.{i}"
                     ))
+            nunits_prev = nunits
         return layers
 
     def _prep_predictor(self, name="predictor"):
@@ -552,7 +604,7 @@ class ConvMLP(tf.keras.models.Model):
     @tf.function
     def get_marker_embed_output(self, X, training=False):
         if X is not None:
-            for layer in self.marker_layers:
+            for i, layer in enumerate(self.marker_layers):
                 X = layer(X, training=training)
 
         return X
@@ -560,7 +612,7 @@ class ConvMLP(tf.keras.models.Model):
     @tf.function
     def get_dist_embed_output(self, X, training=False):
         if X is not None:
-            for layer in self.dist_layers:
+            for i, layer in enumerate(self.dist_layers):
                 X = layer(X, training=training)
 
         return X
@@ -568,7 +620,7 @@ class ConvMLP(tf.keras.models.Model):
     @tf.function
     def get_group_embed_output(self, X, training=False):
         if X is not None:
-            for layer in self.group_layers:
+            for i, layer in enumerate(self.group_layers):
                 X = layer(X, training=training)
 
         return X
@@ -576,7 +628,7 @@ class ConvMLP(tf.keras.models.Model):
     @tf.function
     def get_covariate_embed_output(self, X, training=False):
         if X is not None:
-            for layer in self.covariate_layers:
+            for i, layer in enumerate(self.covariate_layers):
                 X = layer(X, training=training)
 
         return X
@@ -621,7 +673,7 @@ class ConvMLP(tf.keras.models.Model):
         return X
 
     @tf.function
-    def long_call(self, inputs, training=False):
+    def long_call(self, inputs, training=False):  # noqa: C901
         from selectml.higher import fmap
 
         # Since we call this function directly in train_step,
@@ -629,13 +681,34 @@ class ConvMLP(tf.keras.models.Model):
         if not self.built:
             _ = self(inputs)
 
-        assert isinstance(inputs, dict) and len(inputs) > 0
+        if isinstance(inputs, dict):
+            markers = inputs.get("markers", None)
+            dists = inputs.get("dists", None)
+            groups = inputs.get("groups", None)
+            covariates = inputs.get("covariates", None)
 
-        # I don't love this but it's my only way I think
-        markers = inputs.get("markers", None)
-        dists = inputs.get("dists", None)
-        groups = inputs.get("groups", None)
-        covariates = inputs.get("covariates", None)
+        elif isinstance(inputs, (list, tuple)):
+            markers = None
+            dists = None
+            groups = None
+            covariates = None
+
+            for name, shape in zip(self._get_input_names(), inputs):
+                if name == 'markers':
+                    markers = shape
+                elif name == 'dists':
+                    dists = shape
+                elif name == 'groups':
+                    groups = shape
+                elif name == 'covariates':
+                    covariates = shape
+                else:
+                    raise ValueError("Got invalid input")
+        else:
+            markers = inputs
+            dists = None
+            groups = None
+            covariates = None
 
         if self.drop_markers:
             markers = None
@@ -644,10 +717,13 @@ class ConvMLP(tf.keras.models.Model):
             dists = None
 
         if self.drop_groups:
-            groups is None
+            groups = None
 
         if self.drop_covariates:
-            covariates is None
+            covariates = None
+
+        if all(k is None for k in [markers, dists, groups, covariates]):
+            raise ValueError('received no input')
 
         # Fmaps are necessary to avoid converting None to a tensorflow
         # placeholder type.

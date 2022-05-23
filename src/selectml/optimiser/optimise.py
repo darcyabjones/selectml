@@ -6,7 +6,7 @@ import numpy as np
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Union, Optional
-    from typing import Dict, List, Literal, Sequence
+    from typing import Dict, List, Literal, Sequence, Mapping
     from typing import Iterable
     from typing import Tuple
     import optuna
@@ -14,8 +14,18 @@ if TYPE_CHECKING:
     BaseTypes = Union[None, bool, str, int, float]
     Params = Dict[str, BaseTypes]
     from baikal import Model
-    ODatasetIn = Union[npt.ArrayLike, Sequence[npt.ArrayLike], None]
-    ODatasetOut = Union[np.ndarray, List[np.ndarray], None]
+    ODatasetIn = Union[
+        npt.ArrayLike,
+        Sequence[npt.ArrayLike],
+        Mapping[str, npt.ArrayLike],
+        None
+    ]
+    ODatasetOut = Union[
+        np.ndarray,
+        List[np.ndarray],
+        Dict[str, np.ndarray],
+        None
+    ]
     FitModel = Optional[Tuple[Model, ODatasetOut]]
 
 
@@ -227,17 +237,23 @@ class OptimiseTarget(OptimiseBase):
         if preprocessor == "drop":
             return None
         elif preprocessor == "stdnorm":
-            g = StandardScaler()
+            g = StandardScaler(name=f"{self.name}_preprocessor")
         elif preprocessor == "quantile":
             d = params[f"{self.name}_transformer_quantile_distribution"]
             g = QuantileTransformer(
                 output_distribution=d,
-                n_quantiles=params[f"{self.name}_nquantiles"]
+                n_quantiles=params[f"{self.name}_nquantiles"],
+                name=f"{self.name}_preprocessor",
             )
         elif preprocessor == "ordinal":
-            g = OrdinalTransformer(boundaries=self.ordinal_boundaries)
+            g = OrdinalTransformer(
+                boundaries=self.ordinal_boundaries,
+                name=f"{self.name}_preprocessor",
+            )
         elif preprocessor == "passthrough":
-            g = Unity()  # Unity function
+            g = Unity(
+                name=f"{self.name}_preprocessor",
+            )
         else:
             raise ValueError(f"Got unexpected preprocessor {preprocessor}")
 
@@ -255,10 +271,12 @@ class OptimiseCovariates(OptimiseBase):
             "quantile",
             "power",
         ],
+        use_polynomial: bool = True,
         name: str = "covariate",
     ):
         self.options = list(options)
         self.name = name
+        self.use_polynomial = use_polynomial
         return
 
     def sample_params(
@@ -296,7 +314,7 @@ class OptimiseCovariates(OptimiseBase):
                 )
             )
 
-        if target != "drop":
+        if (target == "drop") and self.use_polynomial:
             p = trial.suggest_categorical(  # noqa
                 f"{self.name}_polynomial_degree",
                 [1, 2, 3]
@@ -330,39 +348,51 @@ class OptimiseCovariates(OptimiseBase):
         preprocessor = params.get(f"{self.name}_transformer", "drop")
 
         if preprocessor == "stdnorm":
-            g = StandardScaler()
+            g = StandardScaler(name=f"{self.name}_preprocessor")
         elif preprocessor == "quantile":
             d = params[f"{self.name}_transformer_quantile_distribution"]
             g = QuantileTransformer(
                 output_distribution=d,
-                n_quantiles=params[f"{self.name}_nquantiles"]
+                n_quantiles=params[f"{self.name}_nquantiles"],
+                name=f"{self.name}_preprocessor"
             )
         elif preprocessor == "robust":
             g = RobustScaler()
         elif preprocessor == "power":
-            g = Pipeline([
-                ("scale", RobustScaler()),
-                ("power", PowerTransformer())
-            ])
+            g = Pipeline(
+                [
+                    ("scale", RobustScaler()),
+                    ("power", PowerTransformer())
+                ],
+                name=f"{self.name}_preprocessor"
+            )
         elif preprocessor == "passthrough":
-            g = Unity()  # Unity function
+            g = Unity(
+                name=f"{self.name}_preprocessor"
+            )
         elif preprocessor == "drop":
             g = None
         else:
             raise ValueError(f"Got unexpected preprocessor {preprocessor}")
 
-        if f"{self.name}_polynomial_degree" in params:
+        if (
+            (f"{self.name}_polynomial_degree" in params)
+            and self.use_polynomial
+        ):
             p = params[f"{self.name}_polynomial_degree"]
             assert isinstance(p, int)
             if p > 1:
-                g = Pipeline([
-                    ("scale", g),
-                    ("power", PolynomialFeatures(
-                        degree=p,
-                        interaction_only=params[f"{self.name}_polynomial_interaction_only"],  # noqa
-                        include_bias=False
-                    )),
-                ])
+                g = Pipeline(
+                    [
+                        ("scale", g),
+                        ("power", PolynomialFeatures(
+                            degree=p,
+                            interaction_only=params[f"{self.name}_polynomial_interaction_only"],  # noqa
+                            include_bias=False
+                        )),
+                    ],
+                    name=f"{self.name}_preprocessor"
+                )
 
         return g
 
@@ -380,6 +410,7 @@ class OptimiseFeatureSelector(OptimiseBase):
         ],
         name: str = "feature_selector",
         gemma_exe: str = "gemma",
+        use_cache: bool = True,
         seed=None
     ):
         from threading import Lock
@@ -392,6 +423,7 @@ class OptimiseFeatureSelector(OptimiseBase):
         self.name = name
 
         self.lock = Lock()
+        self.use_cache = use_cache
         # key is [id(data), option]
         self.cache: "Dict[Tuple[int, str], Model]" = dict()
         return
@@ -445,7 +477,7 @@ class OptimiseFeatureSelector(OptimiseBase):
             return None
 
         elif selector == "passthrough":
-            s = Unity()
+            s = Unity(name=f"{self.name}_preprocessor")
 
         elif selector == "relief":
             n = params[f"{self.name}_nfeatures"]
@@ -454,7 +486,8 @@ class OptimiseFeatureSelector(OptimiseBase):
                 n=n,
                 nepoch=10,
                 sd=1,
-                random_state=self.rng.getrandbits(32)
+                random_state=self.rng.getrandbits(32),
+                name=f"{self.name}_preprocessor",
             )
 
         elif selector == "gemma":
@@ -462,6 +495,7 @@ class OptimiseFeatureSelector(OptimiseBase):
             assert isinstance(n, int)
             s = GEMMASelector(
                 n=n,
+                name=f"{self.name}_preprocessor",
             )
 
         elif selector == "maf":
@@ -469,6 +503,7 @@ class OptimiseFeatureSelector(OptimiseBase):
             assert isinstance(n, int)
             s = MAFSelector(
                 n=n,
+                name=f"{self.name}_preprocessor",
             )
 
         else:
@@ -510,7 +545,7 @@ class OptimiseFeatureSelector(OptimiseBase):
         but we need the data to do the lookup sooo.
         """
         with self.lock:
-            if key in self.cache:
+            if (key in self.cache) and self.use_cache:
                 model = deepcopy(self.cache[key])
                 if model is None:
                     return None
@@ -529,7 +564,8 @@ class OptimiseFeatureSelector(OptimiseBase):
                     model = model_
 
                 model.fit(Xs, y)
-                self.cache[key] = model
+                if self.use_cache:
+                    self.cache[key] = model
 
         return model
 
@@ -615,32 +651,39 @@ class OptimiseMarkerTransformer(OptimiseBase):
             return None
 
         elif preprocessor == "passthrough":
-            g = Unity()
+            g = Unity(name=f"{self.name}_preprocessor")
 
         elif preprocessor == "onehot":
             g = OneHotEncoder(
                 categories="auto",
                 drop=None,
-                handle_unknown="ignore"
+                handle_unknown="ignore",
+                name=f"{self.name}_preprocessor",
             )
 
         elif preprocessor == "maf":
-            g = MAFScaler(ploidy=self.ploidy)
+            g = MAFScaler(
+                ploidy=self.ploidy,
+                name=f"{self.name}_preprocessor",
+            )
 
         elif preprocessor == "noia_add":
-            g = NOIAAdditiveScaler()
+            g = NOIAAdditiveScaler(name=f"{self.name}_preprocessor")
 
         elif preprocessor == "pca":
-            g = Pipeline([
-                ("prescaler", MAFScaler(ploidy=self.ploidy)),
-                (
-                    "pca",
-                    TruncatedSVD(
-                        n_components=params[f"{self.name}_pca_ncomponents"],
-                        random_state=self.rng.getrandbits(32)
+            g = Pipeline(
+                [
+                    ("prescaler", MAFScaler(ploidy=self.ploidy)),
+                    (
+                        "pca",
+                        TruncatedSVD(
+                            n_components=params[f"{self.name}_pca_ncomponents"],  # noqa: E501
+                            random_state=self.rng.getrandbits(32)
+                        )
                     )
-                )
-            ])
+                ],
+                name=f"{self.name}_preprocessor",
+            )
 
         else:
             raise ValueError(f"Encountered invalid selection {preprocessor}")
@@ -703,14 +746,15 @@ class OptimiseDistTransformer(OptimiseBase):
         if preprocessor == "vanraden":
             p = VanRadenSimilarity(
                 ploidy=self.ploidy,
-                distance=True
+                distance=True,
+                name=f"{self.name}_preprocessor",
             )
 
         elif preprocessor == "manhattan":
-            p = ManhattanDistance()
+            p = ManhattanDistance(name=f"{self.name}_preprocessor")
 
         elif preprocessor == "euclidean":
-            p = EuclideanDistance()
+            p = EuclideanDistance(name=f"{self.name}_preprocessor")
 
         else:
             raise ValueError(f"Got unexpected preprocessor {preprocessor}")
@@ -721,7 +765,7 @@ class OptimiseDistTransformer(OptimiseBase):
 
         steps.append(("transformer", p))
         steps.append(("postscaler", RobustScaler()))
-        return Pipeline(steps)
+        return Pipeline(steps, name=f"{self.name}_preprocessor")
 
 
 class OptimiseNonLinear(OptimiseBase):
@@ -758,6 +802,9 @@ class OptimiseNonLinear(OptimiseBase):
             self.options
         )
         params[f"{self.name}_transformer"] = preprocessor
+
+        if preprocessor == "drop":
+            return params
 
         if preprocessor in ("rbf", "laplacian", "poly"):
             max_ncomponents = min([
@@ -832,6 +879,7 @@ class OptimiseNonLinear(OptimiseBase):
                 gamma=params[f"{self.name}_rbf_gamma"],
                 n_components=ncomponents,
                 random_state=self.rng.getrandbits(32),
+                name=f"{self.name}_preprocessor",
             )
         elif preprocessor == "laplacian":
             p = Nystroem(
@@ -839,6 +887,7 @@ class OptimiseNonLinear(OptimiseBase):
                 gamma=params[f"{self.name}_laplacian_gamma"],
                 n_components=ncomponents,
                 random_state=self.rng.getrandbits(32),
+                name=f"{self.name}_preprocessor",
             )
         elif preprocessor == "poly":
             p = Nystroem(
@@ -846,18 +895,22 @@ class OptimiseNonLinear(OptimiseBase):
                 gamma=params[f"{self.name}_poly_gamma"],
                 n_components=ncomponents,
                 random_state=self.rng.getrandbits(32),
-                degree=2
+                degree=2,
+                name=f"{self.name}_preprocessor",
             )
         else:
             raise ValueError(f"Got invalid transformer {preprocessor}.")
 
-        return Pipeline([
-            ("prescaler", MAFScaler(ploidy=self.ploidy)),
-            ("nonlinear", p),
-            ("scaler", QuantileTransformer(
-                n_quantiles=params[f"{self.name}_nquantiles"]
-            ))
-        ])
+        return Pipeline(
+            [
+                ("prescaler", MAFScaler(ploidy=self.ploidy)),
+                ("nonlinear", p),
+                ("scaler", QuantileTransformer(
+                    n_quantiles=params[f"{self.name}_nquantiles"]
+                ))
+            ],
+            name=f"{self.name}_preprocessor",
+        )
 
 
 class OptimiseGrouping(OptimiseBase):
@@ -940,7 +993,7 @@ class OptimiseGrouping(OptimiseBase):
             return None
 
         elif preprocessor == "passthrough":
-            g = Unity()
+            g = Unity(name=f"{self.name}_preprocessor")
 
         elif preprocessor == "onehot":
             g = OneHotEncoder(
@@ -948,47 +1001,54 @@ class OptimiseGrouping(OptimiseBase):
                 drop="if_binary",
                 handle_unknown="ignore",
                 sparse=False,
+                name=f"{self.name}_preprocessor",
             )
 
         elif preprocessor == "factor":
-            g = Pipeline([
-                (
-                    "ohe",
-                    OneHotEncoder(
-                        categories="auto",
-                        drop=None,
-                        handle_unknown="ignore",
-                        sparse=False
+            g = Pipeline(
+                [
+                    (
+                        "ohe",
+                        OneHotEncoder(
+                            categories="auto",
+                            drop=None,
+                            handle_unknown="ignore",
+                            sparse=False
+                        )
+                    ),
+                    (
+                        "factor",
+                        FactorAnalysis(
+                            n_components=params[f"{self.name}_{preprocessor}_ncomponents"],  # noqa
+                            random_state=self.rng.getrandbits(32)
+                        )
                     )
-                ),
-                (
-                    "factor",
-                    FactorAnalysis(
-                        n_components=params[f"{self.name}_{preprocessor}_ncomponents"],  # noqa
-                        random_state=self.rng.getrandbits(32)
-                    )
-                )
-            ])
+                ],
+                name=f"{self.name}_preprocessor",
+            )
 
         elif preprocessor == "pca":
-            g = Pipeline([
-                (
-                    "ohe",
-                    OneHotEncoder(
-                        categories="auto",
-                        drop=None,
-                        handle_unknown="ignore",
-                        sparse=False
+            g = Pipeline(
+                [
+                    (
+                        "ohe",
+                        OneHotEncoder(
+                            categories="auto",
+                            drop=None,
+                            handle_unknown="ignore",
+                            sparse=False
+                        )
+                    ),
+                    (
+                        "pca",
+                        TruncatedSVD(
+                            n_components=params[f"{self.name}_{preprocessor}_ncomponents"],  # noqa
+                            random_state=self.rng.getrandbits(32)
+                        )
                     )
-                ),
-                (
-                    "pca",
-                    TruncatedSVD(
-                        n_components=params[f"{self.name}_{preprocessor}_ncomponents"],  # noqa
-                        random_state=self.rng.getrandbits(32)
-                    )
-                )
-            ])
+                ],
+                name=f"{self.name}_preprocessor",
+            )
 
         return g
 
@@ -1022,6 +1082,9 @@ class OptimiseInteractions(OptimiseBase):
             self.options
         )
         params[f"{self.name}_preprocessor"] = preprocessor
+
+        if preprocessor == "drop":
+            return params
 
         if preprocessor in ("rbf", "laplacian", "poly"):
             max_ncomponents = min([
@@ -1110,12 +1173,15 @@ class OptimiseInteractions(OptimiseBase):
         else:
             raise ValueError("Invalid preprocessor")
 
-        return Pipeline([
-            ("nonlinear", p),
-            ("scaler", QuantileTransformer(
-                n_quantiles=params[f"{self.name}_nquantiles"]
-            ))
-        ])
+        return Pipeline(
+            [
+                ("nonlinear", p),
+                ("scaler", QuantileTransformer(
+                    n_quantiles=params[f"{self.name}_nquantiles"]
+                ))
+            ],
+            name=f"{self.name}_preprocessor",
+        )
 
 
 class OptimiseSK(OptimiseBase):
@@ -1280,6 +1346,7 @@ class OptimiseXGB(OptimiseSK):
             learning_rate=params[f"{self.name}_learning_rate"],
             n_jobs=1,
             verbosity=1,
+            name=f"{self.name}",
         )
 
         return model
@@ -1380,7 +1447,8 @@ class OptimiseKNN(OptimiseSK):
             leaf_size=params[f"{self.name}_leaf_size"],
             algorithm=params[f"{self.name}_algorithm"],
             p=params[f"{self.name}_p"],
-            n_jobs=-1
+            n_jobs=-1,
+            name=f"{self.name}",
         )
         return model
 
@@ -1525,6 +1593,7 @@ class OptimiseRF(OptimiseSK):
             oob_score=oob_score,
             n_jobs=-1,
             random_state=self.rng.getrandbits(32),
+            name=f"{self.name}",
         )
         return model
 
@@ -1665,6 +1734,7 @@ class OptimiseExtraTrees(OptimiseSK):
             oob_score=oob_score,
             n_jobs=-1,
             random_state=self.rng.getrandbits(32),
+            name=f"{self.name}",
         )
         return model
 
@@ -1820,6 +1890,7 @@ class OptimiseNGB(OptimiseSK):
             n_jobs=-1,
             verbose=False,
             random_state=self.rng.getrandbits(32),
+            name=f"{self.name}",
         )
         return model
 
@@ -1942,6 +2013,7 @@ class OptimiseSVM(OptimiseSK):
                 epsilon=params[f"{self.name}_epsilon"],
                 loss=params[f"{self.name}_loss"],
                 random_state=self.rng.getrandbits(32),
+                name=f"{self.name}",
             )
         elif loss in ("hinge", "squared_hinge"):
             model = LinearSVC(
@@ -1955,7 +2027,8 @@ class OptimiseSVM(OptimiseSK):
                 random_state=self.rng.getrandbits(32),
                 penalty=params[f"{self.name}_penalty"],
                 multi_class=params[f"{self.name}_multi_class"],
-                class_weight=params[f"{self.name}_class_weight"]
+                class_weight=params[f"{self.name}_class_weight"],
+                name=f"{self.name}",
             )
         else:
             raise ValueError("This shouldn't be reachable")
@@ -2123,6 +2196,7 @@ class OptimiseSGD(OptimiseSK):
                 power_t=params.get(f"{self.name}_power_t", 0.25),
                 loss=params[f"{self.name}_loss"],
                 random_state=self.rng.getrandbits(32),
+                name=f"{self.name}",
             )
         elif loss in (
             "hinge",
@@ -2143,7 +2217,8 @@ class OptimiseSGD(OptimiseSK):
                 power_t=params.get(f"{self.name}_power_t", 0.25),
                 loss=params[f"{self.name}_loss"],
                 random_state=self.rng.getrandbits(32),
-                class_weight=params[f"{self.name}_class_weight"]
+                class_weight=params[f"{self.name}_class_weight"],
+                name=f"{self.name}",
             )
         else:
             raise ValueError("This shouldn't be reachable")
@@ -2245,6 +2320,7 @@ class OptimiseLassoLars(OptimiseSK):
             jitter=params.get(f"{self.name}_jitter", 0.0),
             max_iter=params.get(f"{self.name}_max_iter", 1000),
             random_state=self.rng.getrandbits(32),
+            name=f"{self.name}",
         )
         return model
 
@@ -2311,6 +2387,7 @@ class OptimiseLars(OptimiseSK):
             jitter=params.get(f"{self.name}_jitter", 0.0),
             n_nonzero_coefs=params.get(f"{self.name}_n_nonzero_coefs", 500),
             random_state=self.rng.getrandbits(32),
+            name=f"{self.name}",
         )
         return model
 
@@ -2327,18 +2404,319 @@ class OptimiseLars(OptimiseSK):
         return out
 
 
-class ConvMLP(OptimiseSK):
+class OptimiseConvMLP(OptimiseSK):
 
     def __init__(
         self,
-        task: "Literal['regression', 'ranking', 'classification']",
+        loss: "List[Literal['mse', 'mae', 'binary_crossentropy', 'pairwise']]",
         seed: "Optional[int]" = None,
-        name: str = "lars",
+        name: str = "conv_mlp",
     ):
-        self.task = task
+        self.loss = loss
         self.rng = random.Random(seed)
         self.name = name
         return
+
+    def _sample_conv(
+        self,
+        trial: "optuna.Trial",
+        params: "Params",
+        nfeatures: int,
+    ) -> "Tuple[Params, int]":
+        from math import floor
+
+        if nfeatures < 30:
+            max_nconv = 0
+        elif nfeatures < 100:
+            max_nconv = 1
+        elif nfeatures < 200:
+            max_nconv = 2
+        else:
+            max_nconv = 3
+
+        conv_nlayers = trial.suggest_int(
+            f"{self.name}_conv_nlayers",
+            0,
+            max_nconv
+        )
+        params[f"{self.name}_conv_nlayers"] = conv_nlayers
+
+        if conv_nlayers < 1:
+            return params, nfeatures
+
+        def get_strides(
+            nl: int,
+            m: int,
+            k: int,
+            d: int
+        ) -> int:
+            for _ in range(nl):
+                m = floor((m - k + d) / d)
+            return m
+
+        def get_max_strides(nl, m_min, m, k, dmax=4):
+            """ I couldn't get a single function that
+            dealt with the recurrence properly, so
+            use a function.
+            """
+            if (m <= m_min) or (nl <= 0):
+                return 1
+
+            for di in range(dmax, 1, -1):
+                mi = get_strides(nl, m, k, di)
+
+                if mi >= m_min:
+                    return di
+
+            return 1
+
+        min_features = 10
+        if max_nconv > 0:
+            max_kernel_size = floor(
+                (nfeatures - min_features + max_nconv)
+                / max_nconv
+            )
+            kernel_size = trial.suggest_int(
+                f"{self.name}_conv_kernel_size",
+                2,
+                min([5, max_kernel_size])
+            )
+            params[f"{self.name}_conv_kernel_size"] = kernel_size
+
+            max_strides = get_max_strides(
+                conv_nlayers,
+                min_features,
+                nfeatures,
+                kernel_size,
+                dmax=4
+            )
+            stride_size = trial.suggest_int(
+                f"{self.name}_conv_strides",
+                1,
+                max_strides
+            )
+            params[f"{self.name}_conv_strides"] = stride_size
+
+            nfeatures = get_strides(
+                conv_nlayers,
+                nfeatures,
+                kernel_size,
+                stride_size
+            )
+
+            params[f"{self.name}_conv_activation"] = trial.suggest_categorical(
+                f"{self.name}_conv_activation",
+                ["linear", "relu"]
+            )
+
+        return params, nfeatures
+
+    def _sample_adaptive(
+        self,
+        trial: "optuna.Trial",
+        params: "Params",
+    ) -> "Params":
+        use_adaptive = trial.suggest_categorical(
+            f"{self.name}_adaptive",
+            [True, False]
+        )
+        params[f"{self.name}_adaptive"] = use_adaptive
+
+        if not use_adaptive:
+            return params
+
+        params[f"{self.name}_adaptive_l1_rate"] = trial.suggest_float(
+            f"{self.name}_adaptive_l1_rate",
+            1e-50,
+            1,
+            log=True
+        )
+
+        params[f"{self.name}_adaptive_l2_rate"] = trial.suggest_float(
+            f"{self.name}_adaptive_l2_rate",
+            1e-50,
+            1,
+            log=True
+        )
+        return params
+
+    def _sample_embed(
+        self,
+        trial: "optuna.Trial",
+        params: "Params",
+        nfeatures: int,
+        final_units: "Optional[int]",
+        min_units: int,
+        max_units: int,
+        min_nlayers: int,
+        max_nlayers: int,
+        name: str
+    ) -> "Tuple[Params, int]":
+        if nfeatures < 1:
+            return params, nfeatures
+
+        nlayers = trial.suggest_int(
+            f"{self.name}_{name}_nlayers",
+            min_nlayers,
+            max_nlayers
+        )
+        params[f"{self.name}_{name}_nlayers"] = nlayers
+
+        if nlayers == 0:
+            assert final_units is None
+
+        if (nlayers == 1) and (final_units is not None):
+            min_units = final_units
+            max_units = final_units
+        else:
+            max_units = min([nfeatures, max_units])
+
+        if min_units > max_units:
+            min_units = max_units
+
+        nunits = trial.suggest_int(
+            f"{self.name}_{name}_nunits",
+            min_units,
+            max_units
+        )
+        params[f"{self.name}_{name}_nunits"] = nunits
+
+        params[f"{self.name}_{name}_0_dropout_rate"] = trial.suggest_float(
+            f"{self.name}_{name}_0_dropout_rate",
+            0.0,
+            0.9
+        )
+
+        if nlayers > 1:
+            params[f"{self.name}_{name}_1_dropout_rate"] = trial.suggest_float(
+                f"{self.name}_{name}_1_dropout_rate",
+                0.0,
+                0.9
+            )
+
+        params[f"{self.name}_{name}_activation"] = trial.suggest_categorical(
+            f"{self.name}_{name}_activation",
+            ["linear", "relu"]
+        )
+
+        params[f"{self.name}_{name}_residual"] = trial.suggest_categorical(
+            f"{self.name}_{name}_residual",
+            [True, False]
+        )
+
+        if final_units is None:
+            outfeatures: int = nunits
+        else:
+            outfeatures = final_units
+
+        return params, outfeatures
+
+    def sample(
+        self,
+        trial: "optuna.Trial",
+        Xs: "Iterable[Optional[npt.ArrayLike]]",
+        **kwargs
+    ) -> "Params":
+        from selectml.higher import or_else, fmap
+
+        first = True
+        groups: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "groups",
+            [None for _ in Xs]
+        )
+        covariates: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "covariates",
+            [None for _ in Xs]
+        )
+        dists: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "dists",
+            [None for _ in Xs]
+        )
+
+        if any([X is None for X in Xs]):
+            nfeatures = 0
+            nsamples = 0
+            onehot_nfeatures = 0
+            onehot_nfeatures = 0
+            dist_nfeatures = 0
+            group_nfeatures = 0
+            covariate_nfeatures = 0
+        else:
+            dists_none = [x is None for x in dists]
+            if any(dists_none):
+                assert all(dists_none)
+
+            groups_none = [x is None for x in groups]
+            if any(groups_none):
+                assert all(groups_none)
+
+            covariates_none = [x is None for x in covariates]
+            if any(covariates_none):
+                assert all(covariates_none)
+
+            for X, dist, group, covariate in zip(
+                Xs,
+                dists,
+                groups,
+                covariates
+            ):
+                X = np.array(X)
+                this_nsamples = X.shape[0]
+                this_nfeatures = X.shape[1]
+                this_onehot_nfeatures = np.sum(ndistinct(X))
+
+                this_dist_nfeatures = or_else(0, fmap(
+                    lambda h: np.asarray(h).shape[1],
+                    dist
+                ))
+                this_group_nfeatures = or_else(0, fmap(
+                    lambda h: np.asarray(h).shape[1],
+                    group
+                ))
+                this_covariate_nfeatures = or_else(0, fmap(
+                    lambda h: np.asarray(h).shape[1],
+                    covariate
+                ))
+
+                if first:
+                    first = False
+                    nsamples = this_nsamples
+                    nfeatures = this_nfeatures
+                    onehot_nfeatures = this_onehot_nfeatures
+                    dist_nfeatures = this_dist_nfeatures
+                    group_nfeatures = this_group_nfeatures
+                    covariate_nfeatures = this_covariate_nfeatures
+                else:
+                    nsamples = min([nsamples, this_nsamples])
+                    nfeatures = min([nfeatures, this_nfeatures])
+                    onehot_nfeatures = min([
+                        onehot_nfeatures,
+                        this_onehot_nfeatures
+                    ])
+                    dist_nfeatures = min([
+                        dist_nfeatures,
+                        this_dist_nfeatures
+                    ])
+                    group_nfeatures = min([
+                        group_nfeatures,
+                        this_group_nfeatures
+                    ])
+                    covariate_nfeatures = min([
+                        covariate_nfeatures,
+                        this_covariate_nfeatures
+                    ])
+
+        params = self.sample_params(
+            trial,
+            nsamples,
+            nfeatures,
+            onehot_nfeatures=onehot_nfeatures,
+            ndists=dist_nfeatures,
+            ngroups=group_nfeatures,
+            ncovariates=covariate_nfeatures,
+            **kwargs
+        )
+        return params
 
     def sample_params(
         self,
@@ -2347,37 +2725,156 @@ class ConvMLP(OptimiseSK):
         nfeatures: int,
         **kwargs
     ) -> "Params":
-        if self.task == "regression":
-            loss_options = ["mse", "mae"]
-        elif self.task == "ranking":
-            loss_options = ["pairwise", "mae", "mse", "binary_crossentropy"]
-        elif self.task == "classification":
-            loss_options = ["binary_crossentropy"]
-        else:
-            raise ValueError("")
+        params: Params = {}
 
-        params = {}
+        params, nfeatures = self._sample_conv(
+            trial,
+            params,
+            nfeatures
+        )
+
+        params = self._sample_adaptive(
+            trial,
+            params,
+        )
+
+        ngroups = kwargs.get("ngroups", 0)
+        ncovariates = kwargs.get("ncovariates", 0)
+        ndists = kwargs.get("ndists", 0)
+
+        if any([x > 0 for x in [ngroups, ncovariates, ndists]]):
+            combine_options = ["add", "concatenate"]
+        else:
+            combine_options = ["concatenate"]
+
+        combine_method = trial.suggest_categorical(
+            f"{self.name}_combine_method",
+            combine_options
+        )
+        params[f"{self.name}_combine_method"] = combine_method
+
+        min_embed_nunits = 5
+        max_embed_nunits = 100
+        min_embed_nlayers = 1
+        max_embed_nlayers = 10
+
+        if combine_method == "add":
+            final_nunits = trial.suggest_int(
+                f"{self.name}_final_nunits",
+                min_embed_nunits,
+                max_embed_nunits
+            )
+            params[f"{self.name}_final_nunits"] = final_nunits
+        else:
+            final_nunits = None
+
+        params, nmarkers = self._sample_embed(
+            trial,
+            params,
+            nfeatures,
+            final_nunits,
+            min_embed_nunits,
+            max_embed_nunits,
+            min_embed_nlayers,
+            max_embed_nlayers,
+            name="marker_embed"
+        )
+
+        params, ndists = self._sample_embed(
+            trial,
+            params,
+            ndists,
+            final_nunits,
+            min_embed_nunits,
+            max_embed_nunits,
+            min_embed_nlayers,
+            max_embed_nlayers,
+            name="dist_embed"
+        )
+
+        params, ngroups = self._sample_embed(
+            trial,
+            params,
+            ngroups,
+            final_nunits,
+            min_embed_nunits,
+            max_embed_nunits,
+            min_embed_nlayers,
+            max_embed_nlayers,
+            name="group_embed"
+        )
+
+        params, ncovariates = self._sample_embed(
+            trial,
+            params,
+            ncovariates,
+            final_nunits,
+            min_embed_nunits,
+            max_embed_nunits,
+            min_embed_nlayers,
+            max_embed_nlayers,
+            name="covariate_embed"
+        )
+
+        if combine_method == "add":
+            assert final_nunits is not None
+            nfeatures = final_nunits
+        else:
+            nfeatures = nmarkers + ndists + ngroups + ncovariates
+
+        assert nfeatures > 0
+
+        params, nembed = self._sample_embed(
+            trial,
+            params,
+            nfeatures,
+            None,
+            min_embed_nunits,
+            max_embed_nunits,
+            0,
+            max_embed_nlayers,
+            name="post_embed"
+        )
+
+        selfsupervised_loss = trial.suggest_categorical(
+            f"{self.name}_selfsupervised_loss",
+            ["none", "semihard_triplet", "hard_triplet"]
+        )
+        params[f"{self.name}_selfsupervised_loss"] = selfsupervised_loss
+
+        if selfsupervised_loss != "none":
+            params[f"{self.name}_{selfsupervised_loss}_rate"] = trial.suggest_float(  # noqa: E501
+                f"{self.name}_{selfsupervised_loss}_rate",
+                1e-4,
+                1
+            )
+
+        params[f"{self.name}_predictor_dropout_rate"] = trial.suggest_float(
+            f"{self.name}_predictor_dropout_rate",
+            0.0,
+            0.9,
+        )
+
+        # For the kind of data we have, i've rarely seen it need to go
+        # further than 200 epochs
+        params[f"{self.name}_nepochs"] = trial.suggest_int(
+            f"{self.name}_nepochs",
+            10,
+            200
+        )
+
+        params[f"{self.name}_learning_rate"] = trial.suggest_float(
+            f"{self.name}_learning_rate",
+            1e-6,
+            1,
+            log=True,
+        )
+
         params[f"{self.name}_loss"] = trial.suggest_categorical(
             f"{self.name}_loss",
-            loss_options
+            self.loss
         )
 
-        conv_nlayers = trial.suggest_int(
-            f"{self.name}_conv_nlayers",
-            0,
-            3
-        )
-
-        if conv_nlayers > 0:
-            pass
-
-
-        """f"{self.name}_jitter": trial.suggest_float(
-            f"{self.name}_jitter",
-            1e-20,
-            1,
-            log=True
-        )"""
         return params
 
     def model(
@@ -2385,24 +2882,113 @@ class ConvMLP(OptimiseSK):
         params: "Params",
         **kwargs
     ) -> "Optional[Model]":
-        from .wrapper import Lars
+        from .wrapper import ConvMLPClassifier, ConvMLPRegressor, ConvMLPRanker
 
-        model = Lars(
-            fit_intercept=params[f"{self.name}_fit_intercept"],
-            jitter=params.get(f"{self.name}_jitter", 0.0),
-            n_nonzero_coefs=params.get(f"{self.name}_n_nonzero_coefs", 500),
-            random_state=self.rng.getrandbits(32),
+        loss = params[f"{self.name}_loss"]
+
+        if loss in ("mse", "mae"):
+            cls = ConvMLPRegressor
+        elif loss == "binary_crossentropy":
+            cls = ConvMLPClassifier
+        elif loss == "pairwise":
+            cls = ConvMLPRanker
+        else:
+            raise ValueError("Got invalid loss")
+
+        inputs: "List[Literal['markers', 'dists', 'groups', 'covariates']]" = []  # noqa: E501
+        if params.get(f"{self.name}_marker_embed_nlayers", 0) > 0:
+            inputs.append("markers")
+
+        if params.get(f"{self.name}_dist_embed_nlayers", 0) > 0:
+            inputs.append("dists")
+
+        if params.get(f"{self.name}_group_embed_nlayers", 0) > 0:
+            inputs.append("groups")
+
+        if params.get(f"{self.name}_covariate_embed_nlayers", 0) > 0:
+            inputs.append("covariates")
+
+        model = cls(
+            loss=loss,
+            optimizer__learning_rate=params.get(f"{self.name}_learning_rate", 0.001),  # noqa: E501
+            epochs=params.get(f"{self.name}_nepochs", 100),
+            verbose=0,
+            conv_nlayers=params.get(f"{self.name}_conv_nlayers", 0),
+            conv_filters=params.get(f"{self.name}_conv_filters", 1),
+            conv_strides=params.get(f"{self.name}_conv_strides", 1),
+            conv_kernel_size=params.get(f"{self.name}_conv_kernel_size", 2),
+            conv_activation=params.get(f"{self.name}_conv_activation", "linear"),  # noqa: E501
+            conv_use_batchnorm=True,
+            adaptive_l1=params.get(f"{self.name}_adaptive", False),
+            adaptive_l1_rate=params.get(f"{self.name}_adaptive_l1_rate", 0.0),
+            adaptive_l2_rate=params.get(f"{self.name}_adaptive_l1_rate", 0.0),
+            marker_embed_nlayers=params.get(f"{self.name}_marker_embed_nlayers", 1),  # noqa: E501
+            marker_embed_residual=params.get(f"{self.name}_marker_embed_residual", False),  # noqa: E501
+            marker_embed_nunits=params.get(f"{self.name}_marker_embed_nunits", 2),  # noqa: E501
+            marker_embed_final_nunits=params.get(f"{self.name}_final_nunits", None),  # noqa: E501
+            marker_embed_0_dropout_rate=params.get(f"{self.name}_marker_embed_0_dropout_rate", 0.0),  # noqa: E501
+            marker_embed_1_dropout_rate=params.get(f"{self.name}_marker_embed_1_dropout_rate", 0.0),  # noqa: E501
+            marker_embed_activation=params.get(f"{self.name}_marker_embed_activation", "linear"),  # noqa: E501
+            dist_embed_nlayers=params.get(f"{self.name}_dist_embed_nlayers", 0),  # noqa: E501
+            dist_embed_residual=params.get(f"{self.name}_dist_embed_residual", False),  # noqa: E501
+            dist_embed_nunits=params.get(f"{self.name}_dist_embed_nunits", 2),  # noqa: E501
+            dist_embed_final_nunits=params.get(f"{self.name}_final_nunits", None),  # noqa: E501
+            dist_embed_0_dropout_rate=params.get(f"{self.name}_dist_embed_0_dropout_rate", 0.0),  # noqa: E501
+            dist_embed_1_dropout_rate=params.get(f"{self.name}_dist_embed_1_dropout_rate", 0.0),  # noqa: E501
+            dist_embed_activation=params.get(f"{self.name}_dist_embed_activation", "linear"),  # noqa: E501
+            group_embed_nlayers=params.get(f"{self.name}_group_embed_nlayers", 0),  # noqa: E501
+            group_embed_residual=params.get(f"{self.name}_group_embed_residual", False),  # noqa: E501
+            group_embed_nunits=params.get(f"{self.name}_group_embed_nunits", 2),  # noqa: E501
+            group_embed_final_nunits=params.get(f"{self.name}_final_nunits", None),  # noqa: E501
+            group_embed_0_dropout_rate=params.get(f"{self.name}_group_embed_0_dropout_rate", 0.0),  # noqa: E501
+            group_embed_1_dropout_rate=params.get(f"{self.name}_group_embed_1_dropout_rate", 0.0),  # noqa: E501
+            group_embed_activation=params.get(f"{self.name}_group_embed_activation", "linear"),  # noqa: E501
+            covariate_embed_nlayers=params.get(f"{self.name}_covariate_embed_nlayers", 0),  # noqa: E501
+            covariate_embed_residual=params.get(f"{self.name}_covariate_embed_residual", False),  # noqa: E501
+            covariate_embed_nunits=params.get(f"{self.name}_covariate_embed_nunits", 2),  # noqa: E501
+            covariate_embed_final_nunits=params.get(f"{self.name}_final_nunits", None),  # noqa: E501
+            covariate_embed_0_dropout_rate=params.get(f"{self.name}_covariate_embed_0_dropout_rate", 0.0),  # noqa: E501
+            covariate_embed_1_dropout_rate=params.get(f"{self.name}_covariate_embed_1_dropout_rate", 0.0),  # noqa: E501
+            covariate_embed_activation=params.get(f"{self.name}_covariate_embed_activation", "linear"),  # noqa: E501
+            combine_method=params.get(f"{self.name}_combine_method", "concatenate"),  # noqa: E501
+            post_embed_nlayers=params.get(f"{self.name}_post_embed_nlayers", 0),  # noqa: E501
+            post_embed_residual=params.get(f"{self.name}_post_embed_residual", False),  # noqa: E501
+            post_embed_nunits=params.get(f"{self.name}_post_embed_nunits", 2),
+            post_embed_0_dropout_rate=params.get(f"{self.name}_post_embed_0_dropout_rate", 0.0),  # noqa: E501
+            post_embed_1_dropout_rate=params.get(f"{self.name}_post_embed_1_dropout_rate", 0.0),  # noqa: E501
+            post_embed_activation=params.get(f"{self.name}_post_embed_activation", "linear"),  # noqa: E501
+            predictor_dropout_rate=params.get(f"{self.name}_predictor_dropout_rate", 0.0),  # noqa: E501
+            hard_triplet_loss_rate=params.get(f"{self.name}_hard_triplet_loss_rate", None),  # noqa: E501
+            semihard_triplet_loss_rate=params.get(f"{self.name}_semihard_triplet_loss_rate", None),  # noqa: E501
+            input_names=inputs,
+            name=f"{self.name}",
         )
         return model
 
     def starting_points(self) -> "List[Params]":
         out: "List[Params]" = []
-
-        for i in [50, 100, 500, 1000]:
-            d: "Params" = {
-                f"{self.name}_fit_intercept": True,
-                f"{self.name}_n_nonzero_coefs": i,
-                f"{self.name}_jitter": 0,
-            }
-            out.append(d)
         return out
+
+    def fit(
+        self,
+        params: "Params",
+        Xs: "ODatasetIn",
+        y: "Optional[npt.ArrayLike]" = None,
+        **kwargs,
+    ) -> "Optional[Model]":
+        if isinstance(Xs, np.ndarray):
+            X: ODatasetOut = np.asarray(Xs)
+        elif isinstance(Xs, list):
+            X = [np.asarray(xi) for xi in Xs]
+        elif isinstance(Xs, dict):
+            X = {k: np.asarray(xi) for k, xi in Xs.items()}
+        else:
+            raise ValueError("Invalid data")
+
+        model = self.model(params)
+
+        if model is None:
+            return None
+
+        model.fit(X, y)
+        return model

@@ -1,4 +1,3 @@
-
 from copy import copy
 from baikal import make_step, Step
 import numpy as np
@@ -189,20 +188,19 @@ Lars = make_step(
     class_name="Lars"
 )
 
-ConvMLPClassifier = make_step(
-    tfmodels.ConvMLPClassifier,
-    class_name="ConvMLPClassifier"
-)
 
-ConvMLPRegressor = make_step(
-    tfmodels.ConvMLPRegressor,
-    class_name="ConvMLPRegressor"
-)
+# The order of inheritance is important!
+class ConvMLPClassifier(Step, tfmodels.ConvMLPClassifier):
+    pass
 
-ConvMLPRanker = make_step(
-    tfmodels.ConvMLPRanker,
-    class_name="ConvMLPRanker"
-)
+
+class ConvMLPRegressor(Step, tfmodels.ConvMLPRegressor):
+    pass
+
+
+class ConvMLPRanker(Step, tfmodels.ConvMLPRanker):
+    pass
+
 
 Nystroem = make_step(
     kernel_approximation.Nystroem,

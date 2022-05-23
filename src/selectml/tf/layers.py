@@ -184,9 +184,9 @@ class LocalLinkage(layers.Layer):
         self.use_bias_first = use_bias_first
         self.use_bias = use_bias
         self.use_bias_last = use_bias_last
-        self.activation_first = activation_first
-        self.activation = activation
-        self.activation_last = activation_last
+        self.activation_first = activations.get(activation_first)
+        self.activation = activations.get(activation)
+        self.activation_last = activations.get(activation_last)
         self.bias_regularizer = bias_regularizer
         self.dropout_rate = dropout_rate
         self.use_bn = use_bn
@@ -278,7 +278,7 @@ class LocalLasso(tf.keras.layers.Layer):
         self.kernel_regularizer = kernel_regularizer
         self.activity_regularizer = activity_regularizer
         self.nonneg = nonneg
-        self.activation = activation
+        self.activation = activations.get(activation)
         self.use_bias = use_bias
 
         if kernel_regularizer is None and (activity_regularizer is not None):
@@ -356,9 +356,9 @@ class ConvLinkage(layers.Layer):
         self.use_bias_first = use_bias_first
         self.use_bias = use_bias
         self.use_bias_last = use_bias_last
-        self.activation_first = activation_first
-        self.activation = activation
-        self.activation_last = activation_last
+        self.activation_first = activations.get(activation_first)
+        self.activation = activations.get(activation)
+        self.activation_last = activations.get(activation_last)
         self.bias_regularizer = bias_regularizer
         self.dropout_rate = dropout_rate
         self.use_bn = use_bn
@@ -447,7 +447,7 @@ class GatedUnit(layers.Layer):
         super(GatedUnit, self).__init__(name=name, **kwargs)
         self.units = units
         self.use_bias = use_bias
-        self.activation = activation
+        self.activation = activations.get(activation)
         self.gate_kernel_regularizer = gate_kernel_regularizer
         self.gate_activity_regularizer = gate_activity_regularizer
         self.gate_bias_regularizer = gate_bias_regularizer
@@ -514,7 +514,7 @@ class GatedResidualUnit(layers.Layer):
         super(GatedResidualUnit, self).__init__(name=name, **kwargs)
         self.units = units
         self.use_bias = use_bias
-        self.activation = activation
+        self.activation = activations.get(activation)
         self.gate_kernel_regularizer = gate_kernel_regularizer
         self.gate_activity_regularizer = gate_activity_regularizer
         self.gate_bias_regularizer = gate_bias_regularizer
@@ -613,7 +613,7 @@ class ResidualUnit(layers.Layer):
         super(ResidualUnit, self).__init__()
         self.units = units
         self.dropout_rate = dropout_rate
-        self.activation = activation
+        self.activation = activations.get(activation)
         self.use_bias = use_bias
         self.nonlinear_kernel_regularizer = nonlinear_kernel_regularizer
         self.nonlinear_activity_regularizer = nonlinear_activity_regularizer
@@ -653,7 +653,8 @@ class ResidualUnit(layers.Layer):
     def call(self, inputs, training=False):
         assert inputs.shape[-1] == self.units, (
             "The input shape must be the same as the output shape. "
-            "Consider using the ParallelResidualUnit."
+            "Consider using the ParallelResidualUnit. "
+            f"Got {str(inputs)}, expect {self.units}"
         )
 
         nl = self.nonlinear_dense(inputs)
@@ -702,7 +703,7 @@ class ParallelResidualUnit(layers.Layer):
         super(ParallelResidualUnit, self).__init__(name=name, **kwargs)
         self.units = units
         self.dropout_rate = dropout_rate
-        self.activation = activation
+        self.activation = activations.get(activation)
         self.use_bias = use_bias
         self.nonlinear_kernel_regularizer = nonlinear_kernel_regularizer
         self.nonlinear_activity_regularizer = nonlinear_activity_regularizer
@@ -802,7 +803,7 @@ class ParallelUnit(layers.Layer):
         super(ParallelUnit, self).__init__(name=name, **kwargs)
         self.units = units
         self.dropout_rate = dropout_rate
-        self.activation = activation
+        self.activation = activations.get(activation)
         self.use_bias = use_bias
         self.nonlinear_kernel_regularizer = nonlinear_kernel_regularizer
         self.nonlinear_activity_regularizer = nonlinear_activity_regularizer
