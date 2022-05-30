@@ -981,7 +981,6 @@ class TFBase(BaseEstimator):
                 force_all_finite=True,
                 input_name="y",
                 ensure_2d=False,
-                allow_nd=False,
                 dtype=self._check_array_dtype(arr, y_numeric),
             ))
 

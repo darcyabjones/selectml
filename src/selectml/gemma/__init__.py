@@ -1,3 +1,3 @@
-from .wrapper import GEMMA
+from .wrapper import GEMMA, GEMMASelector
 
-__all__ = ["GEMMA"]
+__all__ = ["GEMMA", "GEMMASelector"]

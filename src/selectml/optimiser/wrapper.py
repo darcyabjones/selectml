@@ -21,12 +21,15 @@ from sklearn import neighbors
 from sklearn import ensemble
 from sklearn import svm
 from sklearn import linear_model
+from sklearn import feature_selection as sk_feature_selection
 import ngboost
 
 from selectml.sk import preprocessor
 from selectml.sk import distance
 from selectml.sk import feature_selection
-from selectml.tf import wrapper as tfmodels
+from selectml import gemma
+from selectml import tf as tfmodels
+from selectml import bglr
 
 
 class XGBStep(Step):
@@ -202,6 +205,10 @@ class ConvMLPRanker(Step, tfmodels.ConvMLPRanker):
     pass
 
 
+class BGLRRegressor(Step, bglr.BGLRRegressor):
+    pass
+
+
 Nystroem = make_step(
     kernel_approximation.Nystroem,
     class_name="Nystroem"
@@ -285,10 +292,18 @@ EuclideanDistance = make_step(
     class_name="EuclideanDistance"
 )
 
-MultiSURF = make_step(feature_selection.MultiSURF, class_name="MultiSURF")
+SelectKBest = make_step(
+    sk_feature_selection.SelectKBest,
+    class_name="SelectKBest"
+)
+
+MultiSURF = make_step(
+    feature_selection.MultiSURF,
+    class_name="MultiSURF"
+)
 
 GEMMASelector = make_step(
-    feature_selection.GEMMASelector,
+    gemma.GEMMASelector,
     class_name="GEMMASelector"
 )
 

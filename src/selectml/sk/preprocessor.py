@@ -72,6 +72,7 @@ class Make2D(TransformerMixin, BaseEstimator):
             FunctionTransformer class instance.
         """
         X = self._check_input(X, reset=True)
+        self.was_1d = len(X.shape) == 1
         return self
 
     def transform(self, X):
@@ -101,7 +102,10 @@ class Make2D(TransformerMixin, BaseEstimator):
         """
         if self.validate:
             X = check_array(X, accept_sparse=self.accept_sparse)
-        return self._make_1d(X)
+        if self.was_1d:
+            return self._make_1d(X)
+        else:
+            return self._make_2d(X)
 
     def __sklearn_is_fitted__(self):
         """Return True since FunctionTransfomer is stateless."""
@@ -167,6 +171,7 @@ class Make1D(TransformerMixin, BaseEstimator):
             FunctionTransformer class instance.
         """
         X = self._check_input(X, reset=True)
+        self.was_2d = len(X.shape) == 2
         return self
 
     def transform(self, X):
@@ -196,7 +201,11 @@ class Make1D(TransformerMixin, BaseEstimator):
         """
         if self.validate:
             X = check_array(X, accept_sparse=self.accept_sparse)
-        return self._make_2d(X)
+
+        if self.was_2d:
+            return self._make_2d(X)
+        else:
+            return self._make_1d(X)
 
     def __sklearn_is_fitted__(self):
         """Return True since FunctionTransfomer is stateless."""
@@ -1134,7 +1143,7 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
             # if not a dataframe, do normal check_array validation
             X_temp: np.ndarray = check_array(
                 np.array(X),
-                dtype=None,
+                dtype=float,
                 force_all_finite=force_all_finite
             )
 
@@ -1144,7 +1153,7 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
             ):
                 X_ = check_array(
                     np.array(X),
-                    dtype=object,
+                    dtype=float,
                     force_all_finite=force_all_finite
                 )
             else:
@@ -1159,6 +1168,8 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
             X_ = X
             n_samples, n_features = X_.shape
 
+        X_ = X_.astype(float)
+
         X_columns = []
 
         for i in range(n_features):
@@ -1166,7 +1177,7 @@ class OrdinalTransformer(TransformerMixin, BaseEstimator):
             Xi = check_array(
                 Xi,
                 ensure_2d=False,
-                dtype=None,
+                dtype=float,
                 force_all_finite=needs_validation
             )
             X_columns.append(Xi)

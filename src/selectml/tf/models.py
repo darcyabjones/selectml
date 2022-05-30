@@ -654,6 +654,9 @@ class ConvMLP(tf.keras.models.Model):
         if covariates is not None:
             to_combine.append(covariates)
 
+        if len(to_combine) == 1:
+            return to_combine[0]
+
         combined = self.combiner(to_combine)
         return combined
 

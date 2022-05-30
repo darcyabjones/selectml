@@ -3,17 +3,21 @@
 import random
 import numpy as np
 
+from baikal import Model
+
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Union, Optional
     from typing import Dict, List, Literal, Sequence, Mapping
     from typing import Iterable
     from typing import Tuple
+    from typing import TypeVar
+    T = TypeVar("T")
+
     import optuna
     import numpy.typing as npt
     BaseTypes = Union[None, bool, str, int, float]
     Params = Dict[str, BaseTypes]
-    from baikal import Model
     ODatasetIn = Union[
         npt.ArrayLike,
         Sequence[npt.ArrayLike],
@@ -47,7 +51,95 @@ def ndistinct(x, keep_all: bool = False):
         )
 
 
+class MyModel(Model):
+
+    @staticmethod
+    def listify(x: "Union[T, List[T], Tuple[T, ...]]") -> "List[T]":
+        if isinstance(x, list):
+            pass
+        elif isinstance(x, tuple):
+            x = list(x)
+        else:
+            x = [x]
+        return x
+
+    @staticmethod
+    def unlistify(x: "List[T]") -> "Union[List[T], T]":
+        if not isinstance(x, list):
+            raise ValueError("x must be a list.")
+        if len(x) == 1:
+            return x[0]
+        return x
+
+    def transform(
+        self,
+        X,
+        output_names=None,
+    ):
+        """Predict by applying the model on the given input data.
+        Parameters
+        ----------
+        X
+            Input data. It follows the same format as in the ``fit`` method.
+        output_names
+            Names of required outputs (optional). You can specify any final or
+            intermediate output by passing the name of its associated data
+            placeholder. This is useful for debugging. If not specified, it
+            will return the outputs specified at instantiation.
+        Returns
+        -------
+        array-like or list of array-like
+            The computed outputs.
+        """
+
+        # Intermediate results are stored here
+        results_cache = dict()  # type: Dict[DataPlaceholder, ArrayLike]
+
+        # Normalize inputs
+        X_norm = self._normalize_data(X, self._internal_inputs)
+
+        # Get required outputs
+        if output_names is None:
+            outputs = self._internal_outputs
+        else:
+            output_names = self.listify(output_names)
+            if len(set(output_names)) != len(output_names):
+                raise ValueError("output_names must be unique.")
+            outputs = [
+                self.get_data_placeholder(output)
+                for output
+                in output_names
+            ]
+
+        # We allow unused inputs to allow debugging different outputs
+        # without having to change the inputs accordingly.
+        nodes = self._get_required_nodes(
+            X_norm, [], outputs, allow_unused_inputs=True, follow_targets=False
+        )
+
+        # Compute
+        results_cache.update(X_norm)
+
+        for node in nodes:
+            Xs = [results_cache[i] for i in node.inputs]
+            self._compute_node(node, Xs, results_cache)
+
+        output_data = [results_cache[o] for o in outputs]
+        if len(output_data) == 1:
+            return output_data[0]
+        else:
+            return output_data
+
+    def fit(self, *args, **kwargs):
+        print(self)
+        print(args)
+        print(kwargs)
+        return super().fit(*args, **kwargs)
+
+
 class OptimiseBase(object):
+
+    name: str
 
     def sample(
         self,
@@ -55,26 +147,63 @@ class OptimiseBase(object):
         Xs: "Iterable[Optional[npt.ArrayLike]]",
         **kwargs
     ) -> "Params":
+        from selectml.higher import or_else, fmap
 
         first = True
+        groups: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "groups",
+            [None for _ in Xs]
+        )
+        covariates: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "covariates",
+            [None for _ in Xs]
+        )
 
         if any([X is None for X in Xs]):
             nfeatures = 0
             nsamples = 0
             onehot_nfeatures = 0
+            group_nfeatures = 0
+            covariate_nfeatures = 0
 
         else:
-            for X in Xs:
+            groups_none = [x is None for x in groups]
+            if any(groups_none):
+                assert all(groups_none)
+
+            covariates_none = [x is None for x in covariates]
+            if any(covariates_none):
+                assert all(covariates_none)
+
+            for X, group, covariate in zip(
+                Xs,
+                groups,
+                covariates
+            ):
                 X = np.array(X)
+                if len(X.shape) == 1:
+                    X = X.reshape(-1, 1)
+
                 this_nsamples = X.shape[0]
                 this_nfeatures = X.shape[1]
                 this_onehot_nfeatures = np.sum(ndistinct(X))
+
+                this_group_nfeatures = or_else(0, fmap(
+                    lambda h: np.asarray(h).shape[1],
+                    group
+                ))
+                this_covariate_nfeatures = or_else(0, fmap(
+                    lambda h: np.asarray(h).shape[1],
+                    covariate
+                ))
 
                 if first:
                     first = False
                     nsamples = this_nsamples
                     nfeatures = this_nfeatures
                     onehot_nfeatures = this_onehot_nfeatures
+                    group_nfeatures = this_group_nfeatures
+                    covariate_nfeatures = this_covariate_nfeatures
                 else:
                     nsamples = min([nsamples, this_nsamples])
                     nfeatures = min([nfeatures, this_nfeatures])
@@ -82,12 +211,22 @@ class OptimiseBase(object):
                         onehot_nfeatures,
                         this_onehot_nfeatures
                     ])
+                    group_nfeatures = min([
+                        group_nfeatures,
+                        this_group_nfeatures
+                    ])
+                    covariate_nfeatures = min([
+                        covariate_nfeatures,
+                        this_covariate_nfeatures
+                    ])
 
         params = self.sample_params(
             trial,
             nsamples,
             nfeatures,
             onehot_nfeatures=onehot_nfeatures,
+            ngroups=group_nfeatures,
+            ncovariates=covariate_nfeatures,
             **kwargs
         )
         return params
@@ -124,8 +263,6 @@ class OptimiseBase(object):
         if (model is None) or (Xs is None):
             return None
 
-        assert isinstance(Xs, np.ndarray)
-
         if y is None:
             model.fit(Xs)
         else:
@@ -141,8 +278,7 @@ class OptimiseBase(object):
         if (model is None) or (Xs is None):
             return None
 
-        assert isinstance(Xs, np.ndarray)
-        return model(Xs)
+        return model.predict(Xs)
 
     def fit_predict(
         self,
@@ -156,7 +292,32 @@ class OptimiseBase(object):
             return None
 
         model.fit(Xs, y)
-        preds = model(Xs)
+        preds = model.predict(Xs)
+        return model, preds
+
+    def transform(
+        self,
+        model: "Model",
+        Xs: "ODatasetIn",
+    ) -> "ODatasetOut":
+        if (model is None) or (Xs is None):
+            return None
+
+        return model.transform(Xs)
+
+    def fit_transform(
+        self,
+        params: "Params",
+        Xs: "ODatasetIn",
+        y: "Optional[npt.ArrayLike]" = None,
+        **kwargs,
+    ) -> "FitModel":
+        model = self.model(params)
+        if (model is None) or (Xs is None):
+            return None
+
+        model.fit(Xs, y)
+        preds = model.transform(Xs)
         return model, preds
 
     def starting_points(
@@ -230,6 +391,8 @@ class OptimiseTarget(OptimiseBase):
             QuantileTransformer,
             Unity,
             OrdinalTransformer,
+            Make2D,
+            Pipeline,
         )
 
         preprocessor = params.get(f"{self.name}_transformer", "drop")
@@ -257,7 +420,10 @@ class OptimiseTarget(OptimiseBase):
         else:
             raise ValueError(f"Got unexpected preprocessor {preprocessor}")
 
-        return g
+        return Pipeline([
+            ("twod", Make2D()),
+            ("transformer", g),
+        ], name=f"{self.name}_target_transformer")
 
 
 class OptimiseCovariates(OptimiseBase):
@@ -442,12 +608,44 @@ class OptimiseFeatureSelector(OptimiseBase):
                 "We need at least one marker feature."
             )
 
+        ngroups = kwargs.get("ngroups", 0)
+        ncovariates = kwargs.get("ncovariates", 0)
+
         selector = trial.suggest_categorical(
             f"{self.name}_selector",
             self.options
         )
-
         params[f"{self.name}_selector"] = selector
+
+        if selector == "drop":
+            return params
+
+        if selector == "gemma":
+            if ngroups > 0:
+                group_options = [True]
+            else:
+                group_options = [False]
+
+            params[f"{self.name}_use_groups"] = trial.suggest_categorical(  # noqa
+                f"{self.name}_use_groups",
+                group_options
+            )
+
+            if ncovariates > 0:
+                covariate_options = [True]
+            else:
+                covariate_options = [False]
+
+            params[f"{self.name}_use_covariates"] = trial.suggest_categorical(  # noqa
+                f"{self.name}_use_covariates",
+                covariate_options
+            )
+
+            params[f"{self.name}_gemma_pcs"] = trial.suggest_int(
+                f"{self.name}_gemma_pcs",
+                0,
+                min([4, nfeatures - 1]),
+            )
 
         if selector != "passthrough":
             params[f"{self.name}_nfeatures"] = (
@@ -460,7 +658,7 @@ class OptimiseFeatureSelector(OptimiseBase):
 
         return params
 
-    def model(
+    def model(  # noqa
         self,
         params: "Params",
         **kwargs
@@ -470,7 +668,11 @@ class OptimiseFeatureSelector(OptimiseBase):
             GEMMASelector,
             MAFSelector,
             Unity,
+            TruncatedSVD,
+            StandardScaler,
         )
+        from baikal import Input
+        from baikal.steps import ColumnStack
 
         selector = params.get(f"{self.name}_selector", "drop")
         if selector == "drop":
@@ -493,10 +695,72 @@ class OptimiseFeatureSelector(OptimiseBase):
         elif selector == "gemma":
             n = params[f"{self.name}_nfeatures"]
             assert isinstance(n, int)
-            s = GEMMASelector(
+
+            use_covariates = params.get(
+                f"{self.name}_use_covariates",
+                False
+            )
+            assert isinstance(use_covariates, bool)
+
+            use_groups = params.get(
+                f"{self.name}_use_groups",
+                False
+            )
+            assert isinstance(use_groups, bool)
+
+            pcs = params.get(f"{self.name}_gemma_pcs", 0)
+            assert isinstance(pcs, int)
+
+            marker_input = Input(name="markers2")
+            target_input = Input(name="y2")
+            inputs = [marker_input]
+
+            if use_groups:
+                group_input = Input(name="groups2")
+                inputs.append(group_input)
+            else:
+                group_input = None
+
+            if pcs >= 1:
+                scaler = StandardScaler()(marker_input)
+                pc_model = TruncatedSVD(
+                    n_components=pcs,
+                    random_state=self.rng.getrandbits(32)
+                )(scaler)
+            else:
+                pc_model = None
+
+            if use_covariates:
+                cov_input = Input(name="covariates2")
+                inputs.append(cov_input)
+            else:
+                cov_input = None
+
+            if (pc_model is not None) and (cov_input is not None):
+                cov_model = ColumnStack()([pc_model, cov_input])
+            elif pc_model is not None:
+                cov_model = pc_model
+            elif cov_input is not None:
+                cov_model = cov_input
+            else:
+                cov_model = None
+
+            gemma_inputs = [marker_input]
+            if group_input is not None:
+                gemma_inputs.append(group_input)
+
+            if cov_model is not None:
+                gemma_inputs.append(cov_model)
+
+            gemma = GEMMASelector(
                 n=n,
                 name=f"{self.name}_preprocessor",
-            )
+                use_groups=use_groups,
+                use_covariates=use_covariates or (pcs > 0)
+            )(gemma_inputs, target_input)
+
+            print(f"{self.name}", inputs)
+            s = MyModel(inputs, gemma, target_input, name=f"{self.name}_preprocessor")
 
         elif selector == "maf":
             n = params[f"{self.name}_nfeatures"]
@@ -515,6 +779,34 @@ class OptimiseFeatureSelector(OptimiseBase):
     def _check_if_has_gemma(exe: str):
         from shutil import which
         return which(exe) is not None
+
+    @staticmethod
+    def select_inputs(
+        model,
+        data: "Union[List[np.ndarray], np.ndarray]",
+    ) -> "Dict[str, np.ndarray]":
+        from copy import copy
+
+        out = {}
+        if isinstance(data, np.ndarray):
+            out["markers2"] = data
+            return out
+        elif isinstance(data, list) and len(data) == 1:
+            out["markers2"] = data
+            return out
+
+        data = copy(data)
+        for key in ["markers2", "groups2", "covariates2"]:
+            if len(data) == 0:
+                break
+
+            try:
+                model.get_step(key)
+                out[key] = np.asarray(data.pop(0))
+            except ValueError:
+                pass
+
+        return out
 
     def fit(
         self,
@@ -535,10 +827,21 @@ class OptimiseFeatureSelector(OptimiseBase):
 
         selector = params[f"{self.name}_selector"]
 
-        assert isinstance(Xs, np.ndarray)
+        if (
+            isinstance(Xs, list) and not
+            any(isinstance(xi, (float, int)) for xi in Xs)
+        ):
+            Xs_: "Union[np.ndarray, List[np.ndarray]]" = list(map(np.asarray, Xs))  # noqa: E501
+        elif isinstance(Xs, np.ndarray):
+            Xs_ = Xs
+        else:
+            raise ValueError(
+                "Xs needs to be a list of arrays "
+                "or single np array"
+            )
 
         assert isinstance(selector, str)
-        key = (id(Xs), selector)
+        key = (id(Xs_), selector)
 
         """ This isn't a great solution, it repeats some work from the
         model selection bit. Would be good to lookup cache in there,
@@ -558,16 +861,200 @@ class OptimiseFeatureSelector(OptimiseBase):
                     model.n = n
             else:
                 model_ = self.model(params)
+
                 if model_ is None:
                     return None
                 else:
                     model = model_
 
-                model.fit(Xs, y)
+                if isinstance(model_, MyModel):
+                    model.fit(self.select_inputs(model_, Xs_), y)
+                else:
+                    model.fit(Xs_, y)
+
                 if self.use_cache:
                     self.cache[key] = model
 
         return model
+
+    def predict(
+        self,
+        model: "Model",
+        Xs: "ODatasetIn",
+    ) -> "ODatasetOut":
+        if (model is None) or (Xs is None):
+            return None
+
+        if (
+            isinstance(Xs, list) and not
+            any(isinstance(xi, (float, int)) for xi in Xs)
+        ):
+            Xs_: "Union[np.ndarray, List[np.ndarray]]" = list(map(np.asarray, Xs))  # noqa: E501
+        elif isinstance(Xs, np.ndarray):
+            Xs_ = np.asarray(Xs)
+        else:
+            raise ValueError(
+                "Xs needs to be a list of arrays "
+                "or single np array"
+            )
+
+        if isinstance(model, MyModel):
+            return model.predict(self.select_inputs(model, Xs_))
+        else:
+            return model.predict(Xs_)
+
+    def transform(
+        self,
+        model: "Model",
+        Xs: "ODatasetIn",
+    ) -> "ODatasetOut":
+        if (model is None) or (Xs is None):
+            return None
+
+        if (
+            isinstance(Xs, list) and not
+            any(isinstance(xi, (float, int)) for xi in Xs)
+        ):
+            Xs_: "Union[np.ndarray, List[np.ndarray]]" = list(map(np.asarray, Xs))  # noqa: E501
+        elif isinstance(Xs, np.ndarray):
+            Xs_ = np.asarray(Xs)
+        else:
+            raise ValueError(
+                "Xs needs to be a list of arrays "
+                "or single np array"
+            )
+
+        if isinstance(model, MyModel):
+            return model.transform(self.select_inputs(model, Xs_))
+        else:
+            return model.transform(Xs_)
+
+
+class OptimisePostFeatureSelector(OptimiseBase):
+
+    def __init__(
+        self,
+        options: "Sequence[str]" = [
+            "passthrough",
+            "f_classif",
+            "chi2",
+            "f_regression",
+            "mutual_info_regression",
+            "mutual_info_classif",
+        ],
+        name: str = "post_feature_selector",
+        seed=None
+    ):
+        self.options = list(options)
+        self.rng = random.Random(seed)
+        self.name = name
+
+        return
+
+    def sample_params(
+        self,
+        trial: "optuna.Trial",
+        nsamples: int,
+        nfeatures: int,
+        **kwargs
+    ) -> "Params":
+        from math import floor
+        params = {}
+
+        if nfeatures == 0:
+            raise ValueError(
+                "We need at least one feature."
+            )
+
+        selector = trial.suggest_categorical(
+            f"{self.name}_selector",
+            self.options
+        )
+        params[f"{self.name}_selector"] = selector
+
+        if selector == "drop":
+            return params
+
+        if selector != "passthrough":
+            params[f"{self.name}_nfeatures"] = (
+                trial.suggest_int(
+                    f"{self.name}_nfeatures",
+                    min([10, floor(nfeatures / 2)]),
+                    nfeatures - 1,
+                )
+            )
+
+        return params
+
+    def model(  # noqa
+        self,
+        params: "Params",
+        **kwargs
+    ) -> "Optional[Model]":
+        from .wrapper import (
+            SelectKBest,
+            Unity,
+        )
+        from sklearn.feature_selection import (
+            f_classif,
+            chi2,
+            mutual_info_classif,
+            mutual_info_regression,
+            f_regression,
+        )
+
+        selector = params.get(f"{self.name}_selector", "drop")
+        if selector == "drop":
+            return None
+
+        elif selector == "passthrough":
+            s = Unity(name=f"{self.name}_selector")
+            return s
+
+        n = params[f"{self.name}_nfeatures"]
+
+        if selector == "f_classif":
+            s = SelectKBest(
+                score_func=f_classif,
+                k=n,
+                name=f"{self.name}_selector"
+            )
+        elif selector == "chi2":
+            s = SelectKBest(
+                score_func=chi2,
+                k=n,
+                name=f"{self.name}_selector"
+            )
+        elif selector == "f_regression":
+            s = SelectKBest(
+                score_func=f_regression,
+                k=n,
+                name=f"{self.name}_selector"
+            )
+        elif selector == "mutual_info_regression":
+            s = SelectKBest(
+                score_func=lambda X, y: mutual_info_regression(
+                    X,
+                    y,
+                    random_state=self.rng.getrandbits(32)
+                ),
+                k=n,
+                name=f"{self.name}_selector"
+            )
+        elif selector == "mutual_info_classif":
+            s = SelectKBest(
+                score_func=lambda X, y: mutual_info_classif(
+                    X,
+                    y,
+                    random_state=self.rng.getrandbits(32)
+                ),
+                k=n,
+                name=f"{self.name}_selector"
+            )
+        else:
+            raise ValueError(f"Got unexpected feature selector {selector}")
+
+        return s
 
 
 class OptimiseMarkerTransformer(OptimiseBase):
@@ -657,6 +1144,7 @@ class OptimiseMarkerTransformer(OptimiseBase):
             g = OneHotEncoder(
                 categories="auto",
                 drop=None,
+                sparse=False,
                 handle_unknown="ignore",
                 name=f"{self.name}_preprocessor",
             )
@@ -918,16 +1406,12 @@ class OptimiseGrouping(OptimiseBase):
     def __init__(
         self,
         max_ncomponents,
-        options: "List[str]" = [
-            "passthrough",
-            "onehot",
-            "pca"
-        ],
+        allow_pca: bool = True,
         name: str = "grouping",
         seed: "Optional[int]" = None,
     ):
         self.max_ncomponents = max_ncomponents
-        self.options = options
+        self.allow_pca = allow_pca
         self.name = name
         self.rng = random.Random(seed)
         return
@@ -944,33 +1428,35 @@ class OptimiseGrouping(OptimiseBase):
         if nfeatures == 0:
             options = ["drop"]
         else:
-            options = self.options
+            options = ["onehot"]
 
-        preprocessor = trial.suggest_categorical(
+        params[f"{self.name}_transformer"] = trial.suggest_categorical(  # noqa
             f"{self.name}_transformer",
-            options
+            options,
         )
 
-        params[f"{self.name}_transformer"] = preprocessor
-
-        if preprocessor in ("factor", "pca"):
+        if (nfeatures > 0) and self.allow_pca:
             max_ncomponents = min([
                 nsamples - 1,
                 nfeatures - 1,
                 self.max_ncomponents
             ])
 
-            min_ncomponents = min([
-                3,
-                max_ncomponents,
-                round(max_ncomponents / 2)
+            min_ncomponents = max([
+                0,
+                min([
+                    3,
+                    max_ncomponents,
+                    round(max_ncomponents / 2)
+                ])
             ])
 
-            params[f"{self.name}_{preprocessor}_ncomponents"] = trial.suggest_int(  # noqa
-                f"{self.name}_{preprocessor}_ncomponents",
-                min_ncomponents,
-                max_ncomponents
-            )
+            if max_ncomponents > 3:
+                params[f"{self.name}_pca_ncomponents"] = trial.suggest_int(  # noqa
+                    f"{self.name}_pca_ncomponents",
+                    min_ncomponents,
+                    max_ncomponents
+                )
 
         return params
 
@@ -982,9 +1468,7 @@ class OptimiseGrouping(OptimiseBase):
         from .wrapper import (
             Pipeline,
             OneHotEncoder,
-            FactorAnalysis,
             TruncatedSVD,
-            Unity,
         )
 
         preprocessor = params.get(f"{self.name}_transformer", "drop")
@@ -992,58 +1476,27 @@ class OptimiseGrouping(OptimiseBase):
         if preprocessor == "drop":
             return None
 
-        elif preprocessor == "passthrough":
-            g = Unity(name=f"{self.name}_preprocessor")
-
         elif preprocessor == "onehot":
             g = OneHotEncoder(
                 categories="auto",
                 drop="if_binary",
                 handle_unknown="ignore",
                 sparse=False,
-                name=f"{self.name}_preprocessor",
+                name=f"{self.name}_onehot",
             )
+        else:
+            raise ValueError("received invalid preprocessor.")
 
-        elif preprocessor == "factor":
+        if f"{self.name}_pca_ncomponents" in params:
             g = Pipeline(
                 [
-                    (
-                        "ohe",
-                        OneHotEncoder(
-                            categories="auto",
-                            drop=None,
-                            handle_unknown="ignore",
-                            sparse=False
-                        )
-                    ),
-                    (
-                        "factor",
-                        FactorAnalysis(
-                            n_components=params[f"{self.name}_{preprocessor}_ncomponents"],  # noqa
-                            random_state=self.rng.getrandbits(32)
-                        )
-                    )
-                ],
-                name=f"{self.name}_preprocessor",
-            )
-
-        elif preprocessor == "pca":
-            g = Pipeline(
-                [
-                    (
-                        "ohe",
-                        OneHotEncoder(
-                            categories="auto",
-                            drop=None,
-                            handle_unknown="ignore",
-                            sparse=False
-                        )
-                    ),
+                    ("ohe", g),
                     (
                         "pca",
                         TruncatedSVD(
-                            n_components=params[f"{self.name}_{preprocessor}_ncomponents"],  # noqa
-                            random_state=self.rng.getrandbits(32)
+                            n_components=params[f"{self.name}_pca_ncomponents"],  # noqa
+                            random_state=self.rng.getrandbits(32),
+                            name=f"{self.name}_pca",
                         )
                     )
                 ],
@@ -1887,7 +2340,6 @@ class OptimiseNGB(OptimiseSK):
             col_sample=params[f"{self.name}_col_sample"],
             learning_rate=params[f"{self.name}_learning_rate"],
             natural_gradient=params[f"{self.name}_natural_gradient"],
-            n_jobs=-1,
             verbose=False,
             random_state=self.rng.getrandbits(32),
             name=f"{self.name}",
@@ -1943,11 +2395,6 @@ class OptimiseSVM(OptimiseSK):
                 f"{self.name}_loss",
                 self.loss,
             ),
-            f"{self.name}_epsilon": trial.suggest_float(
-                f"{self.name}_epsilon",
-                0.0,
-                5.0,
-            ),
             f"{self.name}_C": trial.suggest_float(
                 f"{self.name}_C",
                 1e-10,
@@ -1958,26 +2405,37 @@ class OptimiseSVM(OptimiseSK):
                 1e-10,
                 5,
             ),
-            f"{self.name}_dual": trial.suggest_categorical(
-                f"{self.name}_dual",
-                [True, False],
-            ),
             f"{self.name}_fit_intercept": trial.suggest_categorical(
                 f"{self.name}_fit_intercept",
                 [True, False],
             ),
-            f"{self.name}_max_iter": trial.suggest_categorical(
+            f"{self.name}_max_iter": trial.suggest_int(
                 f"{self.name}_max_iter",
-                [nfeatures * 10],
+                nfeatures * 10,
+                (nfeatures * 10)
             )
         })
 
+        if nsamples > nfeatures:
+            params[f"{self.name}_dual"] = trial.suggest_categorical(
+                f"{self.name}_dual",
+                [False],
+            )
+
+
+        if params[f"{self.name}_loss"] in (
+            "epsilon_insensitive",
+            "squared_epsilon_insensitive"
+        ):
+            params[f"{self.name}_epsilon"] = trial.suggest_float(
+                    f"{self.name}_epsilon",
+                    0.0,
+                    5.0,
+                )
+
+
         if params[f"{self.name}_loss"] in ("hinge", "squared_hinge"):
             params.update({
-                f"{self.name}_penalty": trial.suggest_categorical(
-                    f"{self.name}_penalty",
-                    ["l1", "l2"],
-                ),
                 f"{self.name}_multi_class": trial.suggest_categorical(
                     f"{self.name}_multi_class",
                     ["ovr", "crammer_singer"]
@@ -1987,6 +2445,12 @@ class OptimiseSVM(OptimiseSK):
                     [None, "balanced"]
                 ),
             })
+            if params[f"{self.name}_loss"] == "squared_hinge":
+                # L1 not supported with hinge
+                params[f"{self.name}_penalty"] = trial.suggest_categorical(
+                    f"{self.name}_penalty",
+                    ["l1", "l2"],
+                )
 
         return params
 
@@ -2003,29 +2467,38 @@ class OptimiseSVM(OptimiseSK):
         loss = params[f"{self.name}_loss"]
         assert isinstance(loss, str)
 
+        dual = params.get(f"{self.name}_dual", True)
+        loss = params[f"{self.name}_loss"]
+
         if loss in ("epsilon_insensitive", "squared_epsilon_insensitive"):
+            if loss == "epsilon_insensitive":
+                dual = True
+
             model = LinearSVR(
                 fit_intercept=params[f"{self.name}_fit_intercept"],
                 intercept_scaling=params[f"{self.name}_intercept_scaling"],
                 max_iter=params[f"{self.name}_max_iter"],
-                dual=params[f"{self.name}_dual"],
+                dual=dual,
                 C=params[f"{self.name}_C"],
                 epsilon=params[f"{self.name}_epsilon"],
-                loss=params[f"{self.name}_loss"],
+                loss=loss,
                 random_state=self.rng.getrandbits(32),
                 name=f"{self.name}",
             )
         elif loss in ("hinge", "squared_hinge"):
+            penalty = params.get(f"{self.name}_penalty", "l2")
+            if loss == "squared_hinge":
+                dual = False
+
             model = LinearSVC(
                 fit_intercept=params[f"{self.name}_fit_intercept"],
                 intercept_scaling=params[f"{self.name}_intercept_scaling"],
                 max_iter=params[f"{self.name}_max_iter"],
-                dual=params[f"{self.name}_dual"],
+                dual=dual,
                 C=params[f"{self.name}_C"],
-                epsilon=params[f"{self.name}_epsilon"],
-                loss=params[f"{self.name}_loss"],
+                loss=loss,
                 random_state=self.rng.getrandbits(32),
-                penalty=params[f"{self.name}_penalty"],
+                penalty=penalty,
                 multi_class=params[f"{self.name}_multi_class"],
                 class_weight=params[f"{self.name}_class_weight"],
                 name=f"{self.name}",
@@ -2742,10 +3215,7 @@ class OptimiseConvMLP(OptimiseSK):
         ncovariates = kwargs.get("ncovariates", 0)
         ndists = kwargs.get("ndists", 0)
 
-        if any([x > 0 for x in [ngroups, ncovariates, ndists]]):
-            combine_options = ["add", "concatenate"]
-        else:
-            combine_options = ["concatenate"]
+        combine_options = ["add", "concatenate"]
 
         combine_method = trial.suggest_categorical(
             f"{self.name}_combine_method",
@@ -2896,16 +3366,25 @@ class OptimiseConvMLP(OptimiseSK):
             raise ValueError("Got invalid loss")
 
         inputs: "List[Literal['markers', 'dists', 'groups', 'covariates']]" = []  # noqa: E501
-        if params.get(f"{self.name}_marker_embed_nlayers", 0) > 0:
+
+        me_nlayers = params.get(f"{self.name}_marker_embed_nlayers", 0)
+        assert isinstance(me_nlayers, int)
+        if me_nlayers > 0:
             inputs.append("markers")
 
-        if params.get(f"{self.name}_dist_embed_nlayers", 0) > 0:
+        de_nlayers = params.get(f"{self.name}_dist_embed_nlayers", 0)
+        assert isinstance(de_nlayers, int)
+        if de_nlayers > 0:
             inputs.append("dists")
 
-        if params.get(f"{self.name}_group_embed_nlayers", 0) > 0:
+        ge_nlayers = params.get(f"{self.name}_group_embed_nlayers", 0)
+        assert isinstance(ge_nlayers, int)
+        if ge_nlayers > 0:
             inputs.append("groups")
 
-        if params.get(f"{self.name}_covariate_embed_nlayers", 0) > 0:
+        ce_nlayers = params.get(f"{self.name}_covariate_embed_nlayers", 0)
+        assert isinstance(ce_nlayers, int)
+        if ce_nlayers > 0:
             inputs.append("covariates")
 
         model = cls(
@@ -2992,3 +3471,6 @@ class OptimiseConvMLP(OptimiseSK):
 
         model.fit(X, y)
         return model
+
+
+
