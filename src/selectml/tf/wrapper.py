@@ -343,6 +343,11 @@ class TFBase(BaseEstimator):
         **kwargs,
     ):
 
+        assert loss is not None
+        if loss == "pairwise":
+            from .losses import RankLoss
+            loss = RankLoss(name="pairwise")
+
         # Parse hardcoded params
         self.model = model
         self.warm_start = warm_start
@@ -466,19 +471,25 @@ class TFBase(BaseEstimator):
                 strict=True,
             ),
         )
-        compile_kwargs["loss"] = self.try_to_convert_strings_to_classes(
-            compile_kwargs["loss"],
-            self.get_loss_class_function_or_string
-        )
-        compile_kwargs["loss"] = self.unflatten_params(
-            items=compile_kwargs["loss"],
-            params=self.route_params(
-                init_params,
-                destination="loss",
-                pass_filter=set(),
-                strict=False,
-            ),
-        )
+
+        if compile_kwargs["loss"] == "pairwise":
+            from .losses import RankLoss
+            compile_kwargs["loss"] = RankLoss(name="pairwise")
+        else:
+            compile_kwargs["loss"] = self.try_to_convert_strings_to_classes(
+                compile_kwargs["loss"],
+                self.get_loss_class_function_or_string
+            )
+            compile_kwargs["loss"] = self.unflatten_params(
+                items=compile_kwargs["loss"],
+                params=self.route_params(
+                    init_params,
+                    destination="loss",
+                    pass_filter=set(),
+                    strict=False,
+                ),
+            )
+
         compile_kwargs["metrics"] = self.try_to_convert_strings_to_classes(
             compile_kwargs.get("metrics", None),
             self.get_metric_class
@@ -1486,6 +1497,13 @@ class TFBase(BaseEstimator):
 
         X_, y_ = self._validate_data(X, y, reset=True)
 
+        if len(y_.shape) == 1:
+            self.n_classes = 1
+        elif len(y_.shape) == 2:
+            self.n_classes = y_.shape[1]
+        else:
+            raise ValueError("Can't do tensor outputs")
+
         self.model_ = self._build_keras_model()
         self._initialize_callbacks()
 
@@ -1930,7 +1948,7 @@ class ConvMLPWrapper(TFBase):
         name="conv_mlp",
         **kwargs
     ):
-        super().__init__(**kwargs)
+        super().__init__(loss=loss, **kwargs)
 
         self.loss = loss
 

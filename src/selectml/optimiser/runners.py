@@ -15,6 +15,16 @@ if TYPE_CHECKING:
 
 from .cv import Dataset
 from .optimise import OptimiseBase
+from .optimise import MyModel
+
+
+from IPython.display import Image, display
+from baikal.plot import plot_model
+
+
+def view_pydot(pdot):
+    plt = Image(pdot.create_png())
+    display(plt)
 
 
 @dataclass
@@ -342,7 +352,6 @@ class BaseRunner(object):
         drop_if_none: bool = True,
     ) -> "Tuple[Params, List[Model], List[Optional[np.ndarray]], bool, bool, bool]":  # noqa
         from copy import copy
-        from itertools import cycle
         from selectml.higher import ffmap2
 
         params = copy(params)
@@ -356,22 +365,15 @@ class BaseRunner(object):
             )
             params.update(trans_params)
 
-            use_markers = cast(bool, params.get(
-                f"{transformer.name}_use_markers",
-                True
-            ))
-            assert isinstance(use_markers, bool)
-            use_groups = cast(bool, params.get(
+            use_markers = True
+            use_groups = params.get(
                 f"{transformer.name}_use_groups",
                 False
-            ))
-
-            assert isinstance(use_groups, bool)
-            use_covariates = cast(bool, params.get(
+            )
+            use_covariates = params.get(
                 f"{transformer.name}_use_covariates",
                 False
-            ))
-            assert isinstance(use_covariates, bool)
+            )
 
             data: "List[List[np.ndarray]]" = []
             if all(d is not None for d in markers) and use_markers:
@@ -390,28 +392,6 @@ class BaseRunner(object):
             else:
                 raise ValueError("didn't get enough data")
 
-            if y is not None:
-                models: "List[Optional[Model]]" = []
-                for di, yi in zip(data_, y):
-                    if isinstance(di, np.ndarray):
-                        models.append(transformer.fit(params, di, yi))
-                    elif isinstance(di, list):
-                        assert all(isinstance(dii, np.ndarray) for dii in di)
-                        models.append(transformer.fit(
-                            params,
-                            di,
-                            yi
-                        ))
-            else:
-                models = list(map(
-                    transformer.fit,
-                    cycle([params]),
-                    data_
-                ))
-
-            if assert_not_none:
-                assert not any(m is None for m in models)
-
             if predict:
                 attr = "predict"
             else:
@@ -423,11 +403,52 @@ class BaseRunner(object):
                 else:
                     return getattr(cls, attr)
 
-            dataout: "List[Optional[np.ndarray]]" = [
-                ffmap2(safe_attr(transformer, attr), mi, di)
-                for mi, di
-                in zip(models, data_)
-            ]
+            models: "List[Optional[Model]]" = []
+            dataout: "List[Optional[np.ndarray]]" = []
+
+            if y is not None:
+                for di, yi in zip(data_, y):
+                    if isinstance(di, np.ndarray):
+                        model = transformer.fit(
+                            params,
+                            di,
+                            yi,
+                        )
+                    elif isinstance(di, list):
+                        assert all(isinstance(dii, np.ndarray) for dii in di)
+                        model = transformer.fit(
+                            params,
+                            di,
+                            yi,
+                        )
+
+                    models.append(model)
+
+                    dout = ffmap2(
+                        safe_attr(transformer, attr),
+                        model,
+                        di,
+                    )
+                    dataout.append(dout)
+
+            else:
+                for di in data_:
+                    model = transformer.fit(
+                        params,
+                        di,
+                    )
+                    models.append(model)
+
+                    dout = ffmap2(
+                        safe_attr(transformer, attr),
+                        model,
+                        di,
+                    )
+                    dataout.append(dout)
+
+            if assert_not_none:
+                assert not any(m is None for m in models)
+
         else:
             models = [None for _ in markers]
 
@@ -539,7 +560,6 @@ class BaseRunner(object):
             covariates=c,
             y=y,
         )
-        print("fsm", feature_selection_models)
 
         feature_selection_inputs = []
         if feature_selection_use_markers:
@@ -557,26 +577,26 @@ class BaseRunner(object):
                 mi.covariate_model for mi in model_paths
             ])
 
-        print("m", list(zip(*feature_selection_inputs)))
-
-        print("m2", [
-            (fsm, inp, mi.y_input)
-            for fsm, inp, mi
-            in list(zip(
-                feature_selection_models,
-                map(list, zip(*feature_selection_inputs)),
-                model_paths
-            ))
-        ])
-        feature_selection_models = [
-            ffmap2(fsm, inp, mi.y_input)
-            for fsm, inp, mi
-            in zip(
-                feature_selection_models,
-                map(list, zip(*feature_selection_inputs)),
-                model_paths
-            )
-        ]
+        if len(feature_selection_inputs) == 1:
+            feature_selection_models = [
+                ffmap2(fsm, inp, mi.y_input)
+                for fsm, inp, mi
+                in zip(
+                    feature_selection_models,
+                    feature_selection_inputs[0],
+                    model_paths
+                )
+            ]
+        else:
+            feature_selection_models = [
+                ffmap2(fsm, inp, mi.y_input)
+                for fsm, inp, mi
+                in zip(
+                    feature_selection_models,
+                    map(list, zip(*feature_selection_inputs)),
+                    model_paths
+                )
+            ]
 
         params, marker_models, X_marker = self._sample_preprocessing_step(
             trial,
@@ -608,6 +628,7 @@ class BaseRunner(object):
             covariates=c,
             y=y,
         )
+
         dist_feature_selection_inputs = []
         if dist_feature_selection_use_markers:
             dist_feature_selection_inputs.append([
@@ -624,14 +645,12 @@ class BaseRunner(object):
                 mi.covariate_model for mi in model_paths
             ])
 
-        print("d", list(zip(*dist_feature_selection_inputs)))
-
         dist_feature_selection_models = [
             ffmap2(fsm, inp, mi.y_input)
             for fsm, inp, mi
             in zip(
                 dist_feature_selection_models,
-                zip(*dist_feature_selection_inputs),
+                map(list, zip(*dist_feature_selection_inputs)),
                 model_paths
             )
         ]
@@ -701,14 +720,12 @@ class BaseRunner(object):
                 mi.covariate_model for mi in model_paths
             ])
 
-        print("nl", list(zip(*nonlinear_feature_selection_inputs)))
-
         nonlinear_feature_selection_models = [
             ffmap2(fsm, inp, mi.y_input)
             for fsm, inp, mi
             in zip(
                 nonlinear_feature_selection_models,
-                zip(*nonlinear_feature_selection_inputs),
+                map(list, zip(*nonlinear_feature_selection_inputs)),
                 model_paths
             )
         ]
@@ -805,7 +822,7 @@ class BaseRunner(object):
         (
             params,
             interactions_post_models,
-            X_nonlinear
+            interactions
         ) = self._sample_preprocessing_step(
             trial,
             params,
@@ -834,15 +851,15 @@ class BaseRunner(object):
         ):
             assert yi is not None
             data_paths.append(DataPath(
-                cvi,
-                yi,
-                xmi,
-                xdi,
-                xli,
-                ci,
-                gi,
-                ji,
-                ii,
+                cv=cvi,
+                y=yi,
+                X_marker=xmi,
+                X_dist=xdi,
+                X_nonlinear=xli,
+                covariates=ci,
+                groups=gi,
+                joined=ji,
+                interactions=ii,
             ))
 
         return params, model_paths, data_paths
@@ -868,33 +885,78 @@ class BaseRunner(object):
         covariates = ffmap(self.covariate_transformer.model(params), c_input)
         groups = ffmap(self.grouping_transformer.model(params), g_input)
 
-        marker_fs = ffmap2(
-            self.marker_feature_selector.model(params),
-            X_input,
-            y_input
-        )
+        if self.marker_feature_selector is not None:
+            marker_fs = self.marker_feature_selector.model(params)
+            if isinstance(marker_fs, MyModel):
+                marker_fs_inputs = [
+                    i for
+                    i in [X_input, g_input, c_input]
+                    if i is not None
+                ]
+                marker_fs = marker_fs(marker_fs_inputs, y_input)
+            else:
+                marker_fs = ffmap2(
+                    marker_fs,
+                    X_input,
+                    y_input
+                )
+        else:
+            marker_fs = None
+
         markers = ffmap(
             self.marker_transformer.model(params),
             marker_fs
         )
 
-        dist_fs = ffmap2(
-            self.dist_feature_selector.model(params),
-            X_input,
-            y_input
-        )
+        if self.dist_post_feature_selector is not None:
+            dist_fs = self.dist_feature_selector.model(params)
+            if isinstance(dist_fs, MyModel):
+                dist_fs_inputs = [
+                    i for
+                    i in [X_input, g_input, c_input]
+                    if i is not None
+                ]
+                dist_fs = dist_fs(dist_fs_inputs, y_input)
+            else:
+                dist_fs = ffmap2(
+                    dist_fs,
+                    X_input,
+                    y_input
+                )
+        else:
+            dist_fs = None
+
         dists = ffmap(self.dist_transformer.model(params), dist_fs)
         dists = ffmap2(
-            self.dist_post_feature_selector.model(params),
+            self.dist_post_feature_selector.model(
+                params,
+                markers=X_input,
+                groups=g_input,
+                covariates=c_input,
+                target=y_input,
+            ),
             dists,
             y_input
         )
 
-        nonlinear_fs = ffmap2(
-            self.nonlinear_feature_selector.model(params),
-            X_input,
-            y_input
-        )
+        if self.nonlinear_post_feature_selector is not None:
+            nonlinear_fs = self.nonlinear_feature_selector.model(params)
+            if isinstance(nonlinear_fs, MyModel):
+                nonlinear_fs_inputs = [
+                    i for
+                    i in [X_input, g_input, c_input]
+                    if i is not None
+                ]
+                nonlinear_fs = nonlinear_fs(nonlinear_fs_inputs, y_input)
+            else:
+                nonlinear_fs = ffmap2(
+                    nonlinear_fs,
+                    X_input,
+                    y_input
+                )
+        else:
+            nonlinear_fs = None
+
         nonlinear = ffmap(
             self.nonlinear_transformer.model(params),
             nonlinear_fs
@@ -970,12 +1032,6 @@ class BaseRunner(object):
         try:
             return model.fit(inputs, data.y)
         except Exception as e:
-            from IPython.display import Image, display
-            from baikal.plot import plot_model
-
-            def view_pydot(pdot):
-                plt = Image(pdot.create_png())
-                display(plt)
             view_pydot(plot_model(model))
             raise e
 
@@ -1171,7 +1227,7 @@ class TFRunner(SKRunner):
 
     def __init__(
         self,
-        task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
+        task: "Literal['regression', 'ranking', 'classification']",
         ploidy: int = 2
     ):
         from selectml.optimiser.optimise import OptimiseConvMLP
@@ -1190,13 +1246,14 @@ class TFRunner(SKRunner):
                 "mse",
                 "pairwise",
             ]
-            target = ["passthrough", "stdnorm", "quantile", "ordinal"]
+            target = ["passthrough", "stdnorm", "quantile"]
             post_fs_options = [
                 "passthrough",
                 "f_regression",
                 "mutual_info_regression"
             ]
         elif task == "ordinal":
+            # this doesn't work because of triplet loss etc
             objectives = ["binary_crossentropy"]
             target = ["ordinal"]
             post_fs_options = [
@@ -1519,17 +1576,17 @@ class TFRunner(SKRunner):
         return Model([ii for ii in inputs if ii is not None], yhat, fp.y_input)
 
 
-class BGLRBaseRunner(SKRunner):
+class BGLRSKRunner(SKRunner):
 
     def __init__(
         self,
         task: "Literal['regression', 'ranking', 'ordinal']",
         ploidy: int = 2
     ):
-        from selectml.optimiser.optimise import OptimiseConvMLP
+        from selectml.optimiser.optimise import OptimiseSKBGLR
 
         if task == "regression":
-            objectives: "List[Literal['mse', 'mae', 'binary_crossentropy', 'pairwise']]" = ["mae", "mse"]  # noqa: E501
+            objective: "Literal['gaussian', 'ordinal']" = 'gaussian'
             target = ["stdnorm", "quantile"]
             post_fs_options = [
                 "passthrough",
@@ -1537,20 +1594,16 @@ class BGLRBaseRunner(SKRunner):
                 "mutual_info_regression"
             ]
         elif task == "ranking":
-            objectives = [
-                "mae",
-                "mse",
-                "pairwise",
-            ]
-            target = ["passthrough", "stdnorm", "quantile", "ordinal"]
+            objective: "Literal['gaussian', 'ordinal']" = 'gaussian'
+            target = ["passthrough", "stdnorm", "quantile"]
             post_fs_options = [
                 "passthrough",
                 "f_regression",
                 "mutual_info_regression"
             ]
         elif task == "ordinal":
-            objectives = ["binary_crossentropy"]
-            target = ["ordinal"]
+            objective: "Literal['gaussian', 'ordinal']" = 'ordinal'
+            target = ["passthrough"]
             post_fs_options = [
                 "passthrough",
                 "f_classif",
@@ -1561,36 +1614,34 @@ class BGLRBaseRunner(SKRunner):
                 "task must be regression, ranking, "
                 "ordinal.")
 
-        # Keras seems to override something to do with deepcopy or mutexes
-        # that means we can't cache the feature selector.
         self._init_preprocessors(
             ploidy=ploidy,
             target_options=target,
-            group_allow_pca=False,
             marker_fs_options=["passthrough", "maf", "relief", "gemma"],
-            nonlinear_fs_options=["drop"],
-            interactions_options=["drop"],
             dist_post_fs_options=post_fs_options,
-            use_fs_cache=False,
-            use_covariate_polynomial=False,
+            nonlinear_fs_options=["drop"],  # TODO REMOVE
+            nonlinear_post_fs_options=post_fs_options,
+            interactions_post_fs_options=post_fs_options,
         )
 
-        self.predictor = OptimiseConvMLP(loss=objectives)
+        self.predictor = OptimiseSKBGLR(objective=objective)
         return
 
-    def _sample_tf_step(  # noqa: C901
+    def _sample_bglr_step(  # noqa: C901
         self,
         trial: "optuna.Trial",
         params: "Params",
         transformer: "Optional[OptimiseBase]",
         markers: "List[Optional[np.ndarray]]",
         dists: "List[Optional[np.ndarray]]",
+        nonlinear: "List[Optional[np.ndarray]]",
         groups: "List[Optional[np.ndarray]]",
         covariates: "List[Optional[np.ndarray]]",
-        y: "Optional[List[Optional[np.ndarray]]]" = None,
-        predict: bool = False,
-        assert_not_none: bool = False,
-        drop_if_none: bool = True,
+        interactions: "List[Optional[np.ndarray]]",
+        y: "Optional[List[Optional[np.ndarray]]]",
+        predict: bool = True,
+        assert_not_none: bool = True,
+        drop_if_none: bool = False,
     ) -> "Tuple[Params, List[Model], List[Optional[np.ndarray]]]":
         from copy import copy
         from itertools import cycle
@@ -1603,23 +1654,43 @@ class BGLRBaseRunner(SKRunner):
                 trial,
                 markers,
                 dists=dists,
+                nonlinear=nonlinear,
                 groups=groups,
                 covariates=covariates,
+                interactions=interactions,
             )
             params.update(trans_params)
 
+            use_markers = f"{self.predictor.name}_markers" in trans_params  # noqa: E501
+            use_dists = f"{self.predictor.name}_dists" in trans_params
+            use_nonlinear = f"{self.predictor.name}_nonlinear" in trans_params
+            use_groups = f"{self.predictor.name}_groups" in trans_params
+            use_covariates = f"{self.predictor.name}_covariates" in trans_params  # noqa: E501
+            use_interactions = f"{self.predictor.name}_interactions" in trans_params  # noqa: E501
+
             data: "List[List[np.ndarray]]" = []
-            if all(d is not None for d in markers):
+            if use_markers and all(d is not None for d in markers):
                 data.append(cast("List[np.ndarray]", markers))
 
-            if all(d is not None for d in dists):
+            if use_dists:
+                assert all(d is not None for d in dists)
                 data.append(cast("List[np.ndarray]", dists))
 
-            if all(d is not None for d in groups):
+            if use_nonlinear:
+                assert all(d is not None for d in groups)
+                data.append(cast("List[np.ndarray]", nonlinear))
+
+            if use_groups:
+                assert all(d is not None for d in groups)
                 data.append(cast("List[np.ndarray]", groups))
 
-            if all(d is not None for d in covariates):
+            if use_covariates:
+                assert all(d is not None for d in covariates)
                 data.append(cast("List[np.ndarray]", covariates))
+
+            if use_interactions:
+                assert all(d is not None for d in interactions)
+                data.append(cast("List[np.ndarray]", interactions))
 
             if len(data) == 1:
                 data_: "Union[List[np.ndarray], List[List[np.ndarray]]]" = data[0]  # noqa: E501
@@ -1697,58 +1768,59 @@ class BGLRBaseRunner(SKRunner):
             data_paths
         ) = self._sample_preprocessing(trial, cv)
 
-        joined = []
-        joined_models = []
-
-        name_map = {
-            "X_marker": "markers",
-            "X_dist": "dists",
-        }
-
-        model_map = {
-            "marker_model": "markers",
-            "dist_model": "dists",
-            "grouping_model": "groups",
-            "covariate_model": "covariates",
-        }
-        for mp, dp in zip(model_paths, data_paths):
-            di = {
-                name_map.get(dk, dk): self._sparse_to_dense(getattr(dp, dk))
-                for dk
-                in ["X_marker", "X_dist", "groups", "covariates"]
-                if getattr(dp, dk) is not None
-            }
-            assert len(di) > 0, "Both joined and interactions were None."
-            joined.append(di)
-            mi = {
-                model_map.get(mk, mk): getattr(mp, mk)
-                for mk
-                in ["marker_model", "dist_model", "grouping_model", "covariate_model"]  # noqa: E501
-                if getattr(mp, mk) is not None
-            }
-            assert len(mi) > 0, "Both joined and interactions models were None"
-            joined_models.append(mi)
-
-        #  params.update(self.predictor.sample(trial, joined))
-
-        params, predictor_models, yhat = self._sample_tf_step(
+        params, predictor_models, yhat = self._sample_bglr_step(
             trial,
             params,
             self.predictor,
-            markers=[j.get("markers", None) for j in joined],
-            dists=[j.get("dists", None) for j in joined],
-            groups=[j.get("groups", None) for j in joined],
-            covariates=[j.get("covariates", None) for j in joined],
+            markers=[j.X_marker for j in data_paths],
+            dists=[j.X_dist for j in data_paths],
+            nonlinear=[j.X_nonlinear for j in data_paths],
+            covariates=[j.covariates for j in data_paths],
+            groups=[j.groups for j in data_paths],
+            interactions=[j.interactions for j in data_paths],
             y=[di.y for di in data_paths],
             predict=True,
             assert_not_none=True,
             drop_if_none=False,
         )
 
+        bglr_inputs = []
+        if f"{self.predictor.name}_markers" in params:
+            bglr_inputs.append([m.marker_model for m in model_paths])
+            if any(z is None for z in bglr_inputs[-1]):
+                raise ValueError(str(bglr_inputs) + "\n" + str(params))
+
+        if f"{self.predictor.name}_dists" in params:
+            bglr_inputs.append([m.dist_model for m in model_paths])
+            if any(z is None for z in bglr_inputs[-1]):
+                raise ValueError(str(bglr_inputs) + "\n" + str(params))
+
+        if f"{self.predictor.name}_nonlinear" in params:
+            bglr_inputs.append([m.nonlinear_model for m in model_paths])
+            if any(z is None for z in bglr_inputs[-1]):
+                raise ValueError(str(bglr_inputs) + "\n" + str(params))
+
+        if f"{self.predictor.name}_groups" in params:
+            bglr_inputs.append([m.grouping_model for m in model_paths])
+            if any(z is None for z in bglr_inputs[-1]):
+                raise ValueError(str(bglr_inputs) + "\n" + str(params))
+
+        if f"{self.predictor.name}_covariates" in params:
+            bglr_inputs.append([m.covariate_model for m in model_paths])
+            if any(z is None for z in bglr_inputs[-1]):
+                raise ValueError(str(bglr_inputs) + "\n" + str(params))
+
+        if f"{self.predictor.name}_interactions" in params:
+            bglr_inputs.append([m.interactions_model for m in model_paths])
+            if any(z is None for z in bglr_inputs[-1]):
+                raise ValueError(str(bglr_inputs) + "\n" + str(params))
+
+        bglr_inputs = list(zip(*bglr_inputs))
+
         predictor_models = [
-            ffmap2(pm, list(mi.values()), mmi.target_model)
-            for pm, mi, mmi
-            in zip(predictor_models, joined_models, model_paths)
+            ffmap2(pm, bi, mmi.target_model)
+            for pm, bi, mmi
+            in zip(predictor_models, bglr_inputs, model_paths)
         ]
 
         # Some models output 1d, others output 2D.
@@ -1788,7 +1860,11 @@ class BGLRBaseRunner(SKRunner):
                 return yhi_
 
             else:
-                return mi.target_transformer.inverse_transform(yhi_)
+                try:
+                    return mi.target_transformer.inverse_transform(yhi_)
+                except Exception as e:
+                    print(yhi_)
+                    raise e
 
         yhat = [
             get_yhat(mp, yi)
@@ -1822,7 +1898,7 @@ class BGLRBaseRunner(SKRunner):
             params,
             models,
             yhat,
-            joined
+            None
         )
 
     def model(self, params, data: "Dataset") -> "Model":
@@ -1837,11 +1913,17 @@ class BGLRBaseRunner(SKRunner):
         if fp.dist_model is not None:
             preprocessed.append(fp.dist_model)
 
+        if fp.nonlinear_model is not None:
+            preprocessed.append(fp.nonlinear_model)
+
         if fp.grouping_model is not None:
             preprocessed.append(fp.grouping_model)
 
         if fp.covariate_model is not None:
             preprocessed.append(fp.covariate_model)
+
+        if fp.interactions_model is not None:
+            preprocessed.append(fp.interactions_model)
 
         model = self.predictor.model(params)(preprocessed, target)
         yhat = fp.target_transformer(
@@ -2156,4 +2238,105 @@ class LarsRunner(SKRunner):
         )
 
         self.predictor = OptimiseLars()
+        return
+
+
+class RFRunner(SKRunner):
+
+    def __init__(
+        self,
+        task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
+        ploidy: int = 2
+    ):
+        from .optimise import OptimiseRF
+
+        self.task = task
+        if task in ("regression", "ranking"):
+            target = ["passthrough", "stdnorm", "quantile"]
+            post_fs_options = [
+                "passthrough",
+                "f_regression",
+                "mutual_info_regression"
+            ]
+            criterion_options = [
+                "squared_error",
+                "absolute_error",
+            ]
+        else:
+            post_fs_options = [
+                "passthrough",
+                "f_classif",
+                "mutual_info_classif"
+            ]
+            criterion_options = [
+                "gini",
+                "entropy"
+            ]
+            if task == "ordinal":
+                target = ["ordinal"]
+            else:
+                target = ["passthrough"]
+
+        self._init_preprocessors(
+            ploidy=ploidy,
+            target_options=target,
+            dist_post_fs_options=post_fs_options,
+            marker_fs_options=["passthrough", "maf", "relief", "gemma"],
+            nonlinear_fs_options=["drop"],
+            interactions_options=["drop"],
+            use_covariate_polynomial=True,
+        )
+
+        self.predictor = OptimiseRF(criterion=criterion_options)
+        return
+
+
+class KNNRunner(SKRunner):
+
+    def __init__(
+        self,
+        task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
+        ploidy: int = 2
+    ):
+        from .optimise import OptimiseKNN
+
+        if task in ("regression", "ranking"):
+            objective = "regression"
+            target = ["passthrough", "stdnorm", "quantile"]
+            post_fs_options = [
+                "passthrough",
+                "f_regression",
+                "mutual_info_regression"
+            ]
+        elif task == "ordinal":
+            objective = "classification"
+            target = ["ordinal"]
+            post_fs_options = [
+                "passthrough",
+                "f_classif",
+                "mutual_info_classif"
+            ]
+        elif task == "classification":
+            objective = "classification"
+            target = ["passthrough"]
+            post_fs_options = [
+                "passthrough",
+                "f_classif",
+                "mutual_info_classif"
+            ]
+        else:
+            raise ValueError(
+                "task must be regression, ranking, "
+                "ordinal, or classification.")
+
+        self._init_preprocessors(
+            ploidy=ploidy,
+            target_options=target,
+            dist_post_fs_options=post_fs_options,
+            nonlinear_post_fs_options=post_fs_options,
+            interactions_post_fs_options=post_fs_options,
+            use_covariate_polynomial=True,
+        )
+
+        self.predictor = OptimiseKNN(objective=objective)
         return

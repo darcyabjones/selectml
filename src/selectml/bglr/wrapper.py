@@ -435,14 +435,11 @@ class BGLRRegressor(BaseEstimator, RegressorMixin):
         verbose: bool = True,
         rm_existing_files: bool = True,
         random_state: "Optional[int]" = None,
-        name: str = "bglr"
     ):
         if isinstance(models, str):
             models_ = [models]
         else:
             models_ = list(models)
-
-        self.name = name
 
         assert len(models) > 0, "We need to know which models you want to use."
 

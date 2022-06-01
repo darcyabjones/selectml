@@ -23,6 +23,30 @@ def collect_optional(li: List[Optional[T]]) -> Optional[List[T]]:
         return cast("List[T]", li)
 
 
+def ffmap_attr(
+    obj: Optional["T"],
+    attr: str,
+    option: Optional[T],
+    *args: P.args,
+    **kwargs: P.kwargs
+) -> Optional[U]:
+
+    if option is None:
+        return None
+    elif obj is None:
+        return None
+
+    function: Callable[Concatenate[T, P], U] = getattr(obj, attr)
+    return function(option, *args, **kwargs)
+
+
+def safe_attr(cls, attr):
+    if cls is None:
+        return None
+    else:
+        return getattr(cls, attr)
+
+
 def fmap(
     function: Callable[Concatenate[T, P], U],
     option: Optional[T],

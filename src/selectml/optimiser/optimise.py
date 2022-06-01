@@ -32,6 +32,8 @@ if TYPE_CHECKING:
     ]
     FitModel = Optional[Tuple[Model, ODatasetOut]]
 
+    from ..bglr.wrapper import BGLR_MODELS
+
 
 def ndistinct(x, keep_all: bool = False):
     """ Roughly finds out how many features I expect a one hot encoded
@@ -131,9 +133,6 @@ class MyModel(Model):
             return output_data
 
     def fit(self, *args, **kwargs):
-        print(self)
-        print(args)
-        print(kwargs)
         return super().fit(*args, **kwargs)
 
 
@@ -621,6 +620,7 @@ class OptimiseFeatureSelector(OptimiseBase):
             return params
 
         if selector == "gemma":
+
             if ngroups > 0:
                 group_options = [True]
             else:
@@ -641,10 +641,12 @@ class OptimiseFeatureSelector(OptimiseBase):
                 covariate_options
             )
 
+            max_pcs = max([0, min([nsamples, nfeatures]) - 1])
+
             params[f"{self.name}_gemma_pcs"] = trial.suggest_int(
                 f"{self.name}_gemma_pcs",
                 0,
-                min([4, nfeatures - 1]),
+                min([4, max_pcs]),
             )
 
         if selector != "passthrough":
@@ -671,8 +673,7 @@ class OptimiseFeatureSelector(OptimiseBase):
             TruncatedSVD,
             StandardScaler,
         )
-        from baikal import Input
-        from baikal.steps import ColumnStack
+        from baikal.steps import Input, ColumnStack
 
         selector = params.get(f"{self.name}_selector", "drop")
         if selector == "drop":
@@ -711,56 +712,66 @@ class OptimiseFeatureSelector(OptimiseBase):
             pcs = params.get(f"{self.name}_gemma_pcs", 0)
             assert isinstance(pcs, int)
 
-            marker_input = Input(name="markers2")
-            target_input = Input(name="y2")
+            marker_input = Input(name="markers")
+            target_input = Input(name="y")
             inputs = [marker_input]
+            gemma_inputs = [marker_input]
+
+            if use_covariates:
+                covariates_input = Input(name="covariates")
+            else:
+                covariates_input = None
 
             if use_groups:
-                group_input = Input(name="groups2")
-                inputs.append(group_input)
+                groups_input = Input(name="groups")
+                inputs.append(groups_input)
+                gemma_inputs.append(groups_input)
             else:
-                group_input = None
+                groups_input = None
+
+            cov_inputs = []
 
             if pcs >= 1:
-                scaler = StandardScaler()(marker_input)
+                scaler = StandardScaler(
+                    name=f"{self.name}_gemma_pc_scaler"
+                )(marker_input)
                 pc_model = TruncatedSVD(
                     n_components=pcs,
-                    random_state=self.rng.getrandbits(32)
+                    random_state=self.rng.getrandbits(32),
+                    name=f"{self.name}_gemma_pc"
                 )(scaler)
             else:
                 pc_model = None
 
-            if use_covariates:
-                cov_input = Input(name="covariates2")
-                inputs.append(cov_input)
-            else:
-                cov_input = None
+            if covariates_input is not None:
+                cov_inputs.append(covariates_input)
+                inputs.append(covariates_input)
 
-            if (pc_model is not None) and (cov_input is not None):
-                cov_model = ColumnStack()([pc_model, cov_input])
-            elif pc_model is not None:
-                cov_model = pc_model
-            elif cov_input is not None:
-                cov_model = cov_input
-            else:
+            if pc_model is not None:
+                cov_inputs.append(pc_model)
+
+            if len(cov_inputs) == 0:
                 cov_model = None
-
-            gemma_inputs = [marker_input]
-            if group_input is not None:
-                gemma_inputs.append(group_input)
+            elif len(cov_inputs) == 1:
+                cov_model = cov_inputs[0]
+            else:
+                cov_model = ColumnStack()(cov_inputs)
 
             if cov_model is not None:
                 gemma_inputs.append(cov_model)
 
-            gemma = GEMMASelector(
+            gemma_model = GEMMASelector(
                 n=n,
                 name=f"{self.name}_preprocessor",
-                use_groups=use_groups,
-                use_covariates=use_covariates or (pcs > 0)
+                use_groups=groups_input is not None,
+                use_covariates=cov_model is not None,
             )(gemma_inputs, target_input)
-
-            print(f"{self.name}", inputs)
-            s = MyModel(inputs, gemma, target_input, name=f"{self.name}_preprocessor")
+            s = MyModel(
+                inputs,
+                gemma_model,
+                target_input,
+                name=f"{self.name}_preprocessor"
+            )
 
         elif selector == "maf":
             n = params[f"{self.name}_nfeatures"]
@@ -789,14 +800,14 @@ class OptimiseFeatureSelector(OptimiseBase):
 
         out = {}
         if isinstance(data, np.ndarray):
-            out["markers2"] = data
+            out["markers"] = data
             return out
         elif isinstance(data, list) and len(data) == 1:
-            out["markers2"] = data
+            out["markers"] = data
             return out
 
         data = copy(data)
-        for key in ["markers2", "groups2", "covariates2"]:
+        for key in ["markers", "groups", "covariates"]:
             if len(data) == 0:
                 break
 
@@ -860,16 +871,19 @@ class OptimiseFeatureSelector(OptimiseBase):
                     assert isinstance(n, int)
                     model.n = n
             else:
-                model_ = self.model(params)
+                model_ = self.model(params, **kwargs)
 
                 if model_ is None:
                     return None
                 else:
                     model = model_
 
-                if isinstance(model_, MyModel):
-                    model.fit(self.select_inputs(model_, Xs_), y)
+                if selector == "gemma":
+                    i = self.select_inputs(model, Xs_)
+                    model.fit(i, y)
                 else:
+                    if isinstance(Xs_, list):
+                        Xs_ = Xs_[0]
                     model.fit(Xs_, y)
 
                 if self.use_cache:
@@ -881,6 +895,7 @@ class OptimiseFeatureSelector(OptimiseBase):
         self,
         model: "Model",
         Xs: "ODatasetIn",
+        **kwargs
     ) -> "ODatasetOut":
         if (model is None) or (Xs is None):
             return None
@@ -907,6 +922,7 @@ class OptimiseFeatureSelector(OptimiseBase):
         self,
         model: "Model",
         Xs: "ODatasetIn",
+        **kwargs
     ) -> "ODatasetOut":
         if (model is None) or (Xs is None):
             return None
@@ -1112,8 +1128,8 @@ class OptimiseMarkerTransformer(OptimiseBase):
         if preprocessor == "pca":
             params[f"{self.name}_pca_ncomponents"] = trial.suggest_int(
                 f"{self.name}_pca_ncomponents",
-                min_ncomponents,
-                max_ncomponents
+                max([0, min_ncomponents]),
+                max([0, max_ncomponents])
             )
 
         return params
@@ -1187,7 +1203,9 @@ class OptimiseDistTransformer(OptimiseBase):
         options: "Sequence[str]" = [
             "vanraden",
             "manhattan",
-            "euclidean"
+            "euclidean",
+            "noia_additive",
+            "noia_dominance"
         ],
         name: str = "dist"
     ):
@@ -1224,6 +1242,8 @@ class OptimiseDistTransformer(OptimiseBase):
             VanRadenSimilarity,
             ManhattanDistance,
             EuclideanDistance,
+            NOIAAdditiveKernel,
+            NOIADominanceKernel
         )
 
         preprocessor = params.get(f"{self.name}_transformer", "drop")
@@ -1244,6 +1264,12 @@ class OptimiseDistTransformer(OptimiseBase):
         elif preprocessor == "euclidean":
             p = EuclideanDistance(name=f"{self.name}_preprocessor")
 
+        elif preprocessor == "noia_additive":
+            p = NOIAAdditiveKernel(name=f"{self.name}_preprocessor")
+
+        elif preprocessor == "noia_dominance":
+            p = NOIADominanceKernel(name=f"{self.name}_preprocessor")
+
         else:
             raise ValueError(f"Got unexpected preprocessor {preprocessor}")
 
@@ -1252,8 +1278,187 @@ class OptimiseDistTransformer(OptimiseBase):
             steps.append(("prescaler", MAFScaler(ploidy=self.ploidy)))
 
         steps.append(("transformer", p))
-        steps.append(("postscaler", RobustScaler()))
-        return Pipeline(steps, name=f"{self.name}_preprocessor")
+
+        if preprocessor not in ["noia_additive", "noia_dominance"]:
+            steps.append(("postscaler", RobustScaler()))
+
+        if len(steps) > 1:
+            return Pipeline(steps, name=f"{self.name}_preprocessor")
+        else:
+            return p
+
+
+class OptimiseAddEpistasis(OptimiseBase):
+
+    def __init__(
+        self,
+        allow: bool = True,
+        AA: float = 2.,
+        Aa: float = 1.,
+        aa: float = 0.,
+        name: str = "additive_epistasis"
+    ):
+        self.allow = allow
+        self.AA = AA
+        self.Aa = Aa
+        self.aa = aa
+        self.name = name
+        return
+
+    def sample_params(
+        self,
+        trial: "optuna.Trial",
+        nsamples: int,
+        nfeatures: int,
+        **kwargs
+    ) -> "Params":
+
+        if self.allow:
+            options = [True, False]
+        else:
+            options = [False]
+
+        params = {
+            f"{self.name}_use": trial.suggest_categorical(
+                f"{self.name}_use",
+                options
+            )
+        }
+
+        return params
+
+    def model(
+        self,
+        params: "Params",
+        **kwargs
+    ) -> "Optional[Model]":
+        use = params.get(f"{self.name}_use", False)
+
+        if not use:
+            return None
+
+        from .wrappers import NOIAAdditiveKernel, HadamardCovariance
+
+        k = NOIAAdditiveKernel(AA=self.AA, Aa=self.Aa, aa=self.aa)
+        h = HadamardCovariance(a=k, b=k, fit_b=False)
+        return h
+
+
+class OptimiseDomEpistasis(OptimiseBase):
+
+    def __init__(
+        self,
+        allow: bool = True,
+        AA: float = 2.,
+        Aa: float = 1.,
+        aa: float = 0.,
+        name: str = "dominance_epistasis"
+    ):
+        self.allow = allow
+        self.AA = AA
+        self.Aa = Aa
+        self.aa = aa
+        self.name = name
+        return
+
+    def sample_params(
+        self,
+        trial: "optuna.Trial",
+        nsamples: int,
+        nfeatures: int,
+        **kwargs
+    ) -> "Params":
+
+        if self.allow:
+            options = [True, False]
+        else:
+            options = [False]
+
+        params = {
+            f"{self.name}_use": trial.suggest_categorical(
+                f"{self.name}_use",
+                options
+            )
+        }
+
+        return params
+
+    def model(
+        self,
+        params: "Params",
+        **kwargs
+    ) -> "Optional[Model]":
+        use = params.get(f"{self.name}_use", False)
+
+        if not use:
+            return None
+
+        from .wrappers import NOIADominanceKernel, HadamardCovariance
+
+        k = NOIADominanceKernel(AA=self.AA, Aa=self.Aa, aa=self.aa)
+        h = HadamardCovariance(a=k, b=k, fit_b=False)
+        return h
+
+
+class OptimiseAddDomEpistasis(OptimiseBase):
+
+    def __init__(
+        self,
+        allow: bool = True,
+        AA: float = 2.,
+        Aa: float = 1.,
+        aa: float = 0.,
+        name: str = "addxdom_epistasis"
+    ):
+        self.allow = allow
+        self.AA = AA
+        self.Aa = Aa
+        self.aa = aa
+        self.name = name
+        return
+
+    def sample_params(
+        self,
+        trial: "optuna.Trial",
+        nsamples: int,
+        nfeatures: int,
+        **kwargs
+    ) -> "Params":
+
+        if self.allow:
+            options = [True, False]
+        else:
+            options = [False]
+
+        params = {
+            f"{self.name}_use": trial.suggest_categorical(
+                f"{self.name}_use",
+                options
+            )
+        }
+
+        return params
+
+    def model(
+        self,
+        params: "Params",
+        **kwargs
+    ) -> "Optional[Model]":
+        use = params.get(f"{self.name}_use", False)
+
+        if not use:
+            return None
+
+        from .wrappers import (
+            NOIAAdditiveKernel,
+            NOIADominanceKernel,
+            HadamardCovariance
+        )
+
+        a = NOIAAdditiveKernel(AA=self.AA, Aa=self.Aa, aa=self.aa)
+        b = NOIADominanceKernel(AA=self.AA, Aa=self.Aa, aa=self.aa)
+        h = HadamardCovariance(a=a, b=b)
+        return h
 
 
 class OptimiseNonLinear(OptimiseBase):
@@ -1846,10 +2051,12 @@ class OptimiseKNN(OptimiseSK):
 
     def __init__(
         self,
+        objective: "Literal['classification', 'regression']",
         seed: "Optional[int]" = None,
         name: str = "knn",
     ):
         self.rng = random.Random(seed)
+        self.objective = objective
         self.name = name
         return
 
@@ -1892,9 +2099,16 @@ class OptimiseKNN(OptimiseSK):
         params: "Params",
         **kwargs
     ) -> "Optional[Model]":
-        from .wrapper import KNeighborsRegressor
+        from .wrapper import KNeighborsRegressor, KNeighborsClassifier
 
-        model = KNeighborsRegressor(
+        if self.task == "regression":
+            cls = KNeighborsRegressor
+        elif self.task == "classification":
+            cls = KNeighborsClassifier
+        else:
+            raise ValueError("task must be classification or regression")
+
+        model = cls(
             n_neighbors=params[f"{self.name}_n_neighbors"],
             weights=params[f"{self.name}_weights"],
             leaf_size=params[f"{self.name}_leaf_size"],
@@ -1913,14 +2127,14 @@ class OptimiseKNN(OptimiseSK):
                 f"{self.name}_weights": "distance",
                 f"{self.name}_leaf_size": 10,
                 f"{self.name}_algorithm": "kd_tree",
-                f"{self.name}_p": 1,
+                f"{self.name}_p": 2,
             },
             {
                 f"{self.name}_n_neighbors": 10,
                 f"{self.name}_weights": "distance",
                 f"{self.name}_leaf_size": 50,
                 f"{self.name}_algorithm": "kd_tree",
-                f"{self.name}_p": 1,
+                f"{self.name}_p": 2,
             },
         ])
         return out
@@ -2422,7 +2636,6 @@ class OptimiseSVM(OptimiseSK):
                 [False],
             )
 
-
         if params[f"{self.name}_loss"] in (
             "epsilon_insensitive",
             "squared_epsilon_insensitive"
@@ -2432,7 +2645,6 @@ class OptimiseSVM(OptimiseSK):
                     0.0,
                     5.0,
                 )
-
 
         if params[f"{self.name}_loss"] in ("hinge", "squared_hinge"):
             params.update({
@@ -2875,6 +3087,288 @@ class OptimiseLars(OptimiseSK):
             }
             out.append(d)
         return out
+
+
+class OptimiseSKBGLR(OptimiseSK):
+
+    def __init__(
+        self,
+        objective: "Literal['gaussian', 'ordinal']",
+        seed: "Optional[int]" = None,
+        name: str = "sk_bglr",
+    ):
+        self.objective = objective
+        self.rng = random.Random(seed)
+        self.name = name
+        return
+
+    def sample(  # noqa: C901
+        self,
+        trial: "optuna.Trial",
+        Xs: "Iterable[Optional[npt.ArrayLike]]",
+        **kwargs
+    ) -> "Params":
+        from selectml.higher import or_else, fmap
+
+        first = True
+        dists: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "dists",
+            [None for _ in Xs]
+        )
+        nonlinear: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "nonlinear",
+            [None for _ in Xs]
+        )
+        groups: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "groups",
+            [None for _ in Xs]
+        )
+        covariates: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "covariates",
+            [None for _ in Xs]
+        )
+        interactions: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "interactions",
+            [None for _ in Xs]
+        )
+
+        if any([X is None for X in Xs]):
+            nfeatures = 0
+            nsamples = 0
+            dists_nfeatures = 0
+            nonlinear_nfeatures = 0
+            onehot_nfeatures = 0
+            group_nfeatures = 0
+            covariate_nfeatures = 0
+            interactions_nfeatures = 0
+
+        else:
+            dists_none = [x is None for x in dists]
+            if any(dists_none):
+                assert all(dists_none)
+
+            nonlinear_none = [x is None for x in nonlinear]
+            if any(nonlinear_none):
+                assert all(nonlinear_none)
+
+            groups_none = [x is None for x in groups]
+            if any(groups_none):
+                assert all(groups_none)
+
+            covariates_none = [x is None for x in covariates]
+            if any(covariates_none):
+                assert all(covariates_none)
+
+            interactions_none = [x is None for x in interactions]
+            if any(interactions_none):
+                assert all(interactions_none)
+
+            for X, dist, nl, group, covariate, interaction in zip(
+                Xs,
+                dists,
+                nonlinear,
+                groups,
+                covariates,
+                interactions,
+            ):
+                X = np.array(X)
+                if len(X.shape) == 1:
+                    X = X.reshape(-1, 1)
+
+                this_nsamples = X.shape[0]
+                this_nfeatures = X.shape[1]
+                this_onehot_nfeatures = np.sum(ndistinct(X))
+
+                this_dists_nfeatures = or_else(0, fmap(
+                    lambda h: np.asarray(h).shape[1],
+                    dist
+                ))
+
+                this_nonlinear_nfeatures = or_else(0, fmap(
+                    lambda h: np.asarray(h).shape[1],
+                    nl
+                ))
+
+                this_group_nfeatures = or_else(0, fmap(
+                    lambda h: np.asarray(h).shape[1],
+                    group
+                ))
+                this_covariate_nfeatures = or_else(0, fmap(
+                    lambda h: np.asarray(h).shape[1],
+                    covariate
+                ))
+
+                this_interactions_nfeatures = or_else(0, fmap(
+                    lambda h: np.asarray(h).shape[1],
+                    interaction
+                ))
+
+                if first:
+                    first = False
+                    nsamples = this_nsamples
+                    nfeatures = this_nfeatures
+                    onehot_nfeatures = this_onehot_nfeatures
+                    dists_nfeatures = this_dists_nfeatures
+                    nonlinear_nfeatures = this_nonlinear_nfeatures
+                    group_nfeatures = this_group_nfeatures
+                    covariate_nfeatures = this_covariate_nfeatures
+                    interactions_nfeatures = this_interactions_nfeatures
+                else:
+                    nsamples = min([nsamples, this_nsamples])
+                    nfeatures = min([nfeatures, this_nfeatures])
+                    onehot_nfeatures = min([
+                        onehot_nfeatures,
+                        this_onehot_nfeatures
+                    ])
+                    dists_nfeatures = min([
+                        dists_nfeatures,
+                        this_dists_nfeatures
+                    ])
+                    nonlinear_nfeatures = min([
+                        nonlinear_nfeatures,
+                        this_nonlinear_nfeatures
+                    ])
+                    group_nfeatures = min([
+                        group_nfeatures,
+                        this_group_nfeatures
+                    ])
+                    covariate_nfeatures = min([
+                        covariate_nfeatures,
+                        this_covariate_nfeatures
+                    ])
+                    interactions_nfeatures = min([
+                        interactions_nfeatures,
+                        this_interactions_nfeatures
+                    ])
+
+        params: "Params" = {}
+
+        params[f"{self.name}_response_type"] = trial.suggest_categorical(
+            f"{self.name}_response_type",
+            [self.objective],
+        )
+
+        params[f"{self.name}_r2"] = trial.suggest_float(
+            f"{self.name}_r2",
+            0.2,
+            0.8,
+        )
+
+        BGLR_MODELS = [
+            'FIXED', 'BRR', 'BL',
+            'BayesA', 'BayesB', 'BayesC',
+        ]  # excluded 'RKHS'
+
+        if nfeatures > 0:
+            params[f"{self.name}_markers"] = trial.suggest_categorical(
+                f"{self.name}_markers",
+                BGLR_MODELS,
+            )
+
+        if dists_nfeatures > 0:
+            params[f"{self.name}_dists"] = trial.suggest_categorical(
+                f"{self.name}_dists",
+                BGLR_MODELS,
+            )
+
+        if nonlinear_nfeatures > 0:
+            params[f"{self.name}_nonlinear"] = trial.suggest_categorical(
+                f"{self.name}_nonlinear",
+                BGLR_MODELS,
+            )
+
+        if group_nfeatures > 0:
+            params[f"{self.name}_groups"] = trial.suggest_categorical(
+                f"{self.name}_groups",
+                BGLR_MODELS,
+            )
+
+        if covariate_nfeatures > 0:
+            params[f"{self.name}_covariates"] = trial.suggest_categorical(
+                f"{self.name}_covariates",
+                BGLR_MODELS,
+            )
+
+        if interactions_nfeatures > 0:
+            params[f"{self.name}_interactions"] = trial.suggest_categorical(
+                f"{self.name}_interactions",
+                BGLR_MODELS,
+            )
+
+        return params
+
+    def model(
+        self,
+        params: "Params",
+        **kwargs
+    ) -> "Optional[Model]":
+        from .wrapper import BGLRRegressor
+
+        bglr_models: "List[BGLR_MODELS]" = []
+        bglr_names: "List[str]" = []
+        if f"{self.name}_markers" in params:
+            bglr_models.append(params[f"{self.name}_markers"])
+            bglr_names.append("markers")
+
+        if f"{self.name}_dists" in params:
+            bglr_models.append(params[f"{self.name}_dists"])
+            bglr_names.append("dists")
+
+        if f"{self.name}_nonlinear" in params:
+            bglr_models.append(params[f"{self.name}_nonlinear"])
+            bglr_names.append("nonlinear")
+
+        if f"{self.name}_groups" in params:
+            bglr_models.append(params[f"{self.name}_groups"])
+            bglr_names.append("groups")
+
+        if f"{self.name}_covariates" in params:
+            bglr_models.append(params[f"{self.name}_covariates"])
+            bglr_names.append("covariates")
+
+        if f"{self.name}_interactions" in params:
+            bglr_models.append(params[f"{self.name}_interactions"])
+            bglr_names.append("interactions")
+
+        model = BGLRRegressor(
+            models=bglr_models,
+            component_names=bglr_names,
+            niter=10000,
+            burnin=1000,
+            response_type=params.get(f"{self.name}_response_type", "gaussian"),
+            R2=params.get(f"{self.name}_r2", 0.5),
+            random_state=self.rng.getrandbits(32),
+            verbose=False,
+        )
+        return model
+
+    def starting_points(self) -> "List[Params]":
+        out: "List[Params]" = []
+        return out
+
+    def fit(
+        self,
+        params: "Params",
+        Xs: "ODatasetIn",
+        y: "Optional[npt.ArrayLike]" = None,
+        **kwargs,
+    ) -> "Optional[Model]":
+        if isinstance(Xs, np.ndarray):
+            X: ODatasetOut = np.asarray(Xs)
+        elif isinstance(Xs, list):
+            X = [np.asarray(xi) for xi in Xs]
+        elif isinstance(Xs, dict):
+            X = {k: np.asarray(xi) for k, xi in Xs.items()}
+        else:
+            raise ValueError("Invalid data")
+
+        model = self.model(params)
+
+        if model is None:
+            return None
+
+        model.fit(X, y)
+        return model
 
 
 class OptimiseConvMLP(OptimiseSK):
@@ -3471,6 +3965,3 @@ class OptimiseConvMLP(OptimiseSK):
 
         model.fit(X, y)
         return model
-
-
-

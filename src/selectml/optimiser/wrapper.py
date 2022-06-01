@@ -292,6 +292,21 @@ EuclideanDistance = make_step(
     class_name="EuclideanDistance"
 )
 
+NOIAAdditiveKernel = make_step(
+    distance.NOIAAdditiveKernel,
+    class_name="NOIAAdditiveKernel"
+)
+
+NOIADominanceKernel = make_step(
+    distance.NOIADominanceKernel,
+    class_name="NOIADominanceKernel"
+)
+
+HadamardCovariance = make_step(
+    distance.HadamardCovariance,
+    class_name="HadamardCovariance"
+)
+
 SelectKBest = make_step(
     sk_feature_selection.SelectKBest,
     class_name="SelectKBest"
