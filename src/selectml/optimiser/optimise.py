@@ -1205,7 +1205,7 @@ class OptimiseDistTransformer(OptimiseBase):
             "manhattan",
             "euclidean",
             "noia_additive",
-            "noia_dominance"
+            "noia_dominance",
         ],
         name: str = "dist"
     ):
@@ -1243,7 +1243,7 @@ class OptimiseDistTransformer(OptimiseBase):
             ManhattanDistance,
             EuclideanDistance,
             NOIAAdditiveKernel,
-            NOIADominanceKernel
+            NOIADominanceKernel,
         )
 
         preprocessor = params.get(f"{self.name}_transformer", "drop")
@@ -1314,7 +1314,7 @@ class OptimiseAddEpistasis(OptimiseBase):
     ) -> "Params":
 
         if self.allow:
-            options = [True, False]
+            options = [True]
         else:
             options = [False]
 
@@ -1337,10 +1337,10 @@ class OptimiseAddEpistasis(OptimiseBase):
         if not use:
             return None
 
-        from .wrappers import NOIAAdditiveKernel, HadamardCovariance
+        from .wrapper import NOIAAdditiveKernel, HadamardCovariance
 
         k = NOIAAdditiveKernel(AA=self.AA, Aa=self.Aa, aa=self.aa)
-        h = HadamardCovariance(a=k, b=k, fit_b=False)
+        h = HadamardCovariance(a=k, b=k, fit_b=False, name=f"{self.name}_preprocessor")
         return h
 
 
@@ -1370,7 +1370,7 @@ class OptimiseDomEpistasis(OptimiseBase):
     ) -> "Params":
 
         if self.allow:
-            options = [True, False]
+            options = [True]
         else:
             options = [False]
 
@@ -1393,10 +1393,10 @@ class OptimiseDomEpistasis(OptimiseBase):
         if not use:
             return None
 
-        from .wrappers import NOIADominanceKernel, HadamardCovariance
+        from .wrapper import NOIADominanceKernel, HadamardCovariance
 
         k = NOIADominanceKernel(AA=self.AA, Aa=self.Aa, aa=self.aa)
-        h = HadamardCovariance(a=k, b=k, fit_b=False)
+        h = HadamardCovariance(a=k, b=k, fit_b=False, name=f"{self.name}_preprocessor")
         return h
 
 
@@ -1426,7 +1426,7 @@ class OptimiseAddDomEpistasis(OptimiseBase):
     ) -> "Params":
 
         if self.allow:
-            options = [True, False]
+            options = [True]
         else:
             options = [False]
 
@@ -1449,7 +1449,7 @@ class OptimiseAddDomEpistasis(OptimiseBase):
         if not use:
             return None
 
-        from .wrappers import (
+        from .wrapper import (
             NOIAAdditiveKernel,
             NOIADominanceKernel,
             HadamardCovariance
@@ -1457,7 +1457,7 @@ class OptimiseAddDomEpistasis(OptimiseBase):
 
         a = NOIAAdditiveKernel(AA=self.AA, Aa=self.Aa, aa=self.aa)
         b = NOIADominanceKernel(AA=self.AA, Aa=self.Aa, aa=self.aa)
-        h = HadamardCovariance(a=a, b=b)
+        h = HadamardCovariance(a=a, b=b, name=f"{self.name}_preprocessor")
         return h
 
 
@@ -2072,7 +2072,7 @@ class OptimiseKNN(OptimiseSK):
             f"{self.name}_n_neighbors": trial.suggest_int(
                 f"{self.name}_n_neighbors",
                 2,
-                100
+                max([0, min([100, nsamples - 1])]),
             ),
             f"{self.name}_weights": trial.suggest_categorical(
                 f"{self.name}_weights",
@@ -2101,9 +2101,9 @@ class OptimiseKNN(OptimiseSK):
     ) -> "Optional[Model]":
         from .wrapper import KNeighborsRegressor, KNeighborsClassifier
 
-        if self.task == "regression":
+        if self.objective == "regression":
             cls = KNeighborsRegressor
-        elif self.task == "classification":
+        elif self.objective == "classification":
             cls = KNeighborsClassifier
         else:
             raise ValueError("task must be classification or regression")
@@ -3087,6 +3087,336 @@ class OptimiseLars(OptimiseSK):
             }
             out.append(d)
         return out
+
+
+class OptimiseBGLR(OptimiseSK):
+
+    def __init__(
+        self,
+        objective: "Literal['gaussian', 'ordinal']",
+        seed: "Optional[int]" = None,
+        name: str = "bglr",
+    ):
+        self.objective = objective
+        self.rng = random.Random(seed)
+        self.name = name
+        return
+
+    def sample(  # noqa: C901
+        self,
+        trial: "optuna.Trial",
+        Xs: "Iterable[Optional[npt.ArrayLike]]",
+        **kwargs
+    ) -> "Params":
+        from selectml.higher import or_else, fmap
+
+        first = True
+        adds: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "adds",
+            [None for _ in Xs]
+        )
+        doms: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "doms",
+            [None for _ in Xs]
+        )
+        epiadds: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "epiadds",
+            [None for _ in Xs]
+        )
+        epidoms: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "epidoms",
+            [None for _ in Xs]
+        )
+        epiaddxdoms: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "epiaddxdoms",
+            [None for _ in Xs]
+        )
+        groups: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "groups",
+            [None for _ in Xs]
+        )
+        covariates: "List[Optional[npt.ArrayLike]]" = kwargs.get(
+            "covariates",
+            [None for _ in Xs]
+        )
+
+        add_none = [x is None for x in adds]
+        if any(add_none):
+            assert all(add_none)
+
+        dom_none = [x is None for x in doms]
+        if any(dom_none):
+            assert all(dom_none)
+
+        epiadds_none = [x is None for x in epiadds]
+        if any(epiadds_none):
+            assert all(epiadds_none)
+
+        epidoms_none = [x is None for x in epidoms]
+        if any(epidoms_none):
+            assert all(epidoms_none)
+
+        epiaddxdoms_none = [x is None for x in epiaddxdoms]
+        if any(epiaddxdoms_none):
+            assert all(epiaddxdoms_none)
+
+        groups_none = [x is None for x in groups]
+        if any(groups_none):
+            assert all(groups_none)
+
+        covariates_none = [x is None for x in covariates]
+        if any(covariates_none):
+            assert all(covariates_none)
+
+        for X, add, dom, epiadd, epidom, epiaddxdom, group, covariate in zip(  # noqa: E501
+            Xs,
+            adds,
+            doms,
+            epiadds,
+            epidoms,
+            epiaddxdoms,
+            groups,
+            covariates,
+        ):
+            X = np.array(X)
+            if len(X.shape) == 1:
+                X = X.reshape(-1, 1)
+
+            this_nsamples = X.shape[0]
+            this_nfeatures = X.shape[1]
+            this_onehot_nfeatures = np.sum(ndistinct(X))
+
+            this_add_nfeatures = or_else(0, fmap(
+                lambda h: np.asarray(h).shape[1],
+                add
+            ))
+
+            this_dom_nfeatures = or_else(0, fmap(
+                lambda h: np.asarray(h).shape[1],
+                dom
+            ))
+
+            this_epiadd_nfeatures = or_else(0, fmap(
+                lambda h: np.asarray(h).shape[1],
+                epiadd
+            ))
+
+            this_epidom_nfeatures = or_else(0, fmap(
+                lambda h: np.asarray(h).shape[1],
+                epidom
+            ))
+
+            this_epiaddxdom_nfeatures = or_else(0, fmap(
+                lambda h: np.asarray(h).shape[1],
+                epiaddxdom
+            ))
+
+            this_group_nfeatures = or_else(0, fmap(
+                lambda h: np.asarray(h).shape[1],
+                group
+            ))
+
+            this_covariate_nfeatures = or_else(0, fmap(
+                lambda h: np.asarray(h).shape[1],
+                covariate
+            ))
+
+            if first:
+                first = False
+                nsamples = this_nsamples
+                nfeatures = this_nfeatures
+                onehot_nfeatures = this_onehot_nfeatures
+                add_nfeatures = this_add_nfeatures
+                dom_nfeatures = this_dom_nfeatures
+                epiadd_nfeatures = this_epiadd_nfeatures
+                epidom_nfeatures = this_epidom_nfeatures
+                epiaddxdom_nfeatures = this_epiaddxdom_nfeatures
+                group_nfeatures = this_group_nfeatures
+                covariate_nfeatures = this_covariate_nfeatures
+            else:
+                nsamples = min([nsamples, this_nsamples])
+                nfeatures = min([nfeatures, this_nfeatures])
+                onehot_nfeatures = min([
+                    onehot_nfeatures,
+                    this_onehot_nfeatures
+                ])
+                add_nfeatures = min([
+                    add_nfeatures,
+                    this_add_nfeatures
+                ])
+                dom_nfeatures = min([
+                    dom_nfeatures,
+                    this_dom_nfeatures
+                ])
+                epiadd_nfeatures = min([
+                    epiadd_nfeatures,
+                    this_epiadd_nfeatures
+                ])
+                epidom_nfeatures = min([
+                    epidom_nfeatures,
+                    this_epidom_nfeatures
+                ])
+                epiaddxdom_nfeatures = min([
+                    epiaddxdom_nfeatures,
+                    this_epiaddxdom_nfeatures
+                ])
+                group_nfeatures = min([
+                    group_nfeatures,
+                    this_group_nfeatures
+                ])
+                covariate_nfeatures = min([
+                    covariate_nfeatures,
+                    this_covariate_nfeatures
+                ])
+
+        params: "Params" = {}
+
+        params[f"{self.name}_response_type"] = trial.suggest_categorical(
+            f"{self.name}_response_type",
+            [self.objective],
+        )
+
+        params[f"{self.name}_r2"] = trial.suggest_float(
+            f"{self.name}_r2",
+            0.2,
+            0.8,
+        )
+
+        BGLR_MODELS = [
+            'FIXED', 'BRR', 'BL',
+            'BayesA', 'BayesB', 'BayesC',
+        ]  # excluded 'RKHS'
+
+        if nfeatures > 0:
+            params[f"{self.name}_markers"] = trial.suggest_categorical(
+                f"{self.name}_markers",
+                BGLR_MODELS,
+            )
+
+        if add_nfeatures > 0:
+            params[f"{self.name}_add"] = trial.suggest_categorical(
+                f"{self.name}_add",
+                ["RKHS"],
+            )
+
+        if dom_nfeatures > 0:
+            params[f"{self.name}_dom"] = trial.suggest_categorical(
+                f"{self.name}_dom",
+                ["RKHS"],
+            )
+
+        if epiadd_nfeatures > 0:
+            params[f"{self.name}_epiadd"] = trial.suggest_categorical(
+                f"{self.name}_epiadd",
+                ["RKHS"],
+            )
+
+        if epidom_nfeatures > 0:
+            params[f"{self.name}_epidom"] = trial.suggest_categorical(
+                f"{self.name}_epidom",
+                ["RKHS"],
+            )
+
+        if epiaddxdom_nfeatures > 0:
+            params[f"{self.name}_epiaddxdom"] = trial.suggest_categorical(
+                f"{self.name}_epiaddxdom",
+                ["RKHS"],
+            )
+
+        if group_nfeatures > 0:
+            params[f"{self.name}_groups"] = trial.suggest_categorical(
+                f"{self.name}_groups",
+                BGLR_MODELS,
+            )
+
+        if covariate_nfeatures > 0:
+            params[f"{self.name}_covariates"] = trial.suggest_categorical(
+                f"{self.name}_covariates",
+                ["FIXED"],
+            )
+
+        return params
+
+    def model(
+        self,
+        params: "Params",
+        **kwargs
+    ) -> "Optional[Model]":
+        from .wrapper import BGLRRegressor
+
+        bglr_models: "List[BGLR_MODELS]" = []
+        bglr_names: "List[str]" = []
+        if f"{self.name}_markers" in params:
+            bglr_models.append(params[f"{self.name}_markers"])
+            bglr_names.append("markers")
+
+        if f"{self.name}_add" in params:
+            bglr_models.append(params[f"{self.name}_add"])
+            bglr_names.append("add")
+
+        if f"{self.name}_dom" in params:
+            bglr_models.append(params[f"{self.name}_dom"])
+            bglr_names.append("dom")
+
+        if f"{self.name}_epiadd" in params:
+            bglr_models.append(params[f"{self.name}_epiadd"])
+            bglr_names.append("epiadd")
+
+        if f"{self.name}_epidom" in params:
+            bglr_models.append(params[f"{self.name}_epidom"])
+            bglr_names.append("epidom")
+
+        if f"{self.name}_epiaddxdom" in params:
+            bglr_models.append(params[f"{self.name}_epiaddxdom"])
+            bglr_names.append("epiaddxdom")
+
+        if f"{self.name}_groups" in params:
+            bglr_models.append(params[f"{self.name}_groups"])
+            bglr_names.append("groups")
+
+        if f"{self.name}_covariates" in params:
+            bglr_models.append(params[f"{self.name}_covariates"])
+            bglr_names.append("covariates")
+
+        model = BGLRRegressor(
+            models=bglr_models,
+            component_names=bglr_names,
+            niter=10000,
+            burnin=1000,
+            response_type=params.get(f"{self.name}_response_type", "gaussian"),
+            R2=params.get(f"{self.name}_r2", 0.5),
+            random_state=self.rng.getrandbits(32),
+            verbose=False,
+        )
+        return model
+
+    def starting_points(self) -> "List[Params]":
+        out: "List[Params]" = []
+        return out
+
+    def fit(
+        self,
+        params: "Params",
+        Xs: "ODatasetIn",
+        y: "Optional[npt.ArrayLike]" = None,
+        **kwargs,
+    ) -> "Optional[Model]":
+        if isinstance(Xs, np.ndarray):
+            X: ODatasetOut = np.asarray(Xs)
+        elif isinstance(Xs, list):
+            X = [np.asarray(xi) for xi in Xs]
+        elif isinstance(Xs, dict):
+            X = {k: np.asarray(xi) for k, xi in Xs.items()}
+        else:
+            raise ValueError("Invalid data")
+
+        model = self.model(params)
+
+        if model is None:
+            return None
+
+        model.fit(X, y)
+        return model
 
 
 class OptimiseSKBGLR(OptimiseSK):

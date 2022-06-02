@@ -44,6 +44,11 @@ class ModelPath:
     covariate_model: "Optional[Step]" = None
     joined_model: "Optional[Step]" = None
     interactions_model: "Optional[Step]" = None
+    additive_model: "Optional[Step]" = None
+    dominance_model: "Optional[Step]" = None
+    epistasis_add_model: "Optional[Step]" = None
+    epistasis_dom_model: "Optional[Step]" = None
+    epistasis_addxdom_model: "Optional[Step]" = None
 
     def items(self):
         from dataclass import fields
@@ -66,6 +71,11 @@ class DataPath:
     groups: "Optional[np.ndarray]" = None
     joined: "Optional[np.ndarray]" = None
     interactions: "Optional[np.ndarray]" = None
+    X_add: "Optional[np.ndarry]" = None
+    X_dom: "Optional[np.ndarry]" = None
+    X_epiadd: "Optional[np.ndarry]" = None
+    X_epidom: "Optional[np.ndarry]" = None
+    X_epiaddxdom: "Optional[np.ndarry]" = None
 
     def items(self):
         from dataclass import fields
@@ -908,7 +918,7 @@ class BaseRunner(object):
             marker_fs
         )
 
-        if self.dist_post_feature_selector is not None:
+        if self.dist_feature_selector is not None:
             dist_fs = self.dist_feature_selector.model(params)
             if isinstance(dist_fs, MyModel):
                 dist_fs_inputs = [
@@ -939,7 +949,7 @@ class BaseRunner(object):
             y_input
         )
 
-        if self.nonlinear_post_feature_selector is not None:
+        if self.nonlinear_feature_selector is not None:
             nonlinear_fs = self.nonlinear_feature_selector.model(params)
             if isinstance(nonlinear_fs, MyModel):
                 nonlinear_fs_inputs = [
@@ -1815,7 +1825,10 @@ class BGLRSKRunner(SKRunner):
             if any(z is None for z in bglr_inputs[-1]):
                 raise ValueError(str(bglr_inputs) + "\n" + str(params))
 
-        bglr_inputs = list(zip(*bglr_inputs))
+        if len(bglr_inputs) == 1:
+            bglr_inputs = bglr_inputs[0]
+        else:
+            bglr_inputs = list(zip(*bglr_inputs))
 
         predictor_models = [
             ffmap2(pm, bi, mmi.target_model)
@@ -1860,11 +1873,7 @@ class BGLRSKRunner(SKRunner):
                 return yhi_
 
             else:
-                try:
-                    return mi.target_transformer.inverse_transform(yhi_)
-                except Exception as e:
-                    print(yhi_)
-                    raise e
+                return mi.target_transformer.inverse_transform(yhi_)
 
         yhat = [
             get_yhat(mp, yi)
@@ -1906,26 +1915,27 @@ class BGLRSKRunner(SKRunner):
 
         target = fp.target_model
 
+        model = self.predictor.model(params)
         preprocessed = []
-        if fp.marker_model is not None:
+        if "markers" in model.component_names:
             preprocessed.append(fp.marker_model)
 
-        if fp.dist_model is not None:
+        if "dists" in model.component_names:
             preprocessed.append(fp.dist_model)
 
-        if fp.nonlinear_model is not None:
+        if "nonlinear" in model.component_names:
             preprocessed.append(fp.nonlinear_model)
 
-        if fp.grouping_model is not None:
+        if "groups" in model.component_names:
             preprocessed.append(fp.grouping_model)
 
-        if fp.covariate_model is not None:
+        if "covariates" in model.component_names:
             preprocessed.append(fp.covariate_model)
 
-        if fp.interactions_model is not None:
+        if "interactions" in model.component_names:
             preprocessed.append(fp.interactions_model)
 
-        model = self.predictor.model(params)(preprocessed, target)
+        model2 = model(preprocessed, target)
         yhat = fp.target_transformer(
             model,
             compute_func="inverse_transform",
@@ -1935,6 +1945,1020 @@ class BGLRSKRunner(SKRunner):
         any_x = any([
             getattr(fp, a) is not None
             for a in ["marker_model", "dist_model", "nonlinear_model"]]
+        )
+        inputs = [
+            fp.X_input if any_x else None,
+            fp.g_input if (fp.grouping_model is not None) else None,
+            fp.c_input if (fp.covariate_model is not None) else None,
+        ]
+
+        return Model([ii for ii in inputs if ii is not None], yhat, fp.y_input)
+
+
+class BGLRRunner(BaseRunner):
+
+    predictor: "Model"
+
+    def __init__(
+        self,
+        task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
+        ploidy: int = 2
+    ):
+        from selectml.optimiser.optimise import OptimiseBGLR
+
+        if task == "regression":
+            objective: "Literal['gaussian', 'ordinal']" = 'gaussian'
+            target = ["stdnorm", "quantile"]
+        elif task == "ranking":
+            objective: "Literal['gaussian', 'ordinal']" = 'gaussian'
+            target = ["passthrough", "stdnorm", "quantile"]
+        elif task == "ordinal":
+            objective: "Literal['gaussian', 'ordinal']" = 'ordinal'
+            target = ["passthrough"]
+        else:
+            raise ValueError(
+                "task must be regression, ranking, "
+                "ordinal.")
+
+        self._init_bglr_preprocessors(
+            target_options=target,
+            ploidy=ploidy,
+        )
+
+        self.predictor = OptimiseBGLR(objective=objective)
+        return
+
+    def _init_bglr_preprocessors(
+        self,
+        ploidy: int = 2,
+        target_options: "List[str]" = [
+            "passthrough",
+            "stdnorm",
+            "quantile"
+        ],
+        covariate_options: "List[str]" = [
+            "passthrough",
+            "stdnorm",
+            "robust",
+            "quantile",
+            "power",
+        ],
+        group_allow_pca: bool = True,
+        marker_fs_options: "List[str]" = [
+            "passthrough",
+            "maf",
+            "relief",
+            "gemma"
+        ],
+        marker_options: "List[str]" = [
+            "maf",
+            "noia_add",
+        ],
+        add_fs_options: "List[str]" = [
+            "drop",
+            "passthrough",
+            "maf",
+            "relief",
+            "gemma"
+        ],
+        dom_fs_options: "List[str]" = [
+            "drop",
+            "passthrough",
+            "maf",
+            "relief",
+            "gemma"
+        ],
+        epiadd_fs_options: "List[str]" = [
+            "drop",
+            "passthrough",
+            "maf",
+            "relief",
+            "gemma"
+        ],
+        epidom_fs_options: "List[str]" = [
+            "passthrough",
+            "drop",
+            "maf",
+            "relief",
+            "gemma"
+        ],
+        epiaddxdom_fs_options: "List[str]" = [
+            "passthrough",
+            "drop",
+            "maf",
+            "relief",
+            "gemma"
+        ],
+        use_fs_cache: bool = True,
+        use_covariate_polynomial: bool = True,
+    ):
+        from selectml.optimiser.optimise import (
+            OptimiseTarget,
+            OptimiseCovariates,
+            OptimiseFeatureSelector,
+            OptimiseMarkerTransformer,
+            OptimiseDistTransformer,
+            OptimiseAddEpistasis,
+            OptimiseDomEpistasis,
+            OptimiseAddDomEpistasis,
+            OptimiseGrouping,
+        )
+
+        self.ploidy = ploidy
+
+        self.target_transformer = OptimiseTarget(options=target_options)
+
+        self.covariate_transformer = OptimiseCovariates(
+            options=covariate_options,
+            use_polynomial=use_covariate_polynomial
+        )
+
+        self.grouping_transformer = OptimiseGrouping(
+            allow_pca=group_allow_pca,
+            max_ncomponents=50
+        )
+
+        self.marker_feature_selector = OptimiseFeatureSelector(
+            options=marker_fs_options,
+            name="marker_feature_selector",
+            use_cache=use_fs_cache,
+        )
+        self.marker_transformer = OptimiseMarkerTransformer(
+            options=marker_options,
+            ploidy=ploidy,
+            max_ncomponents=200
+        )
+
+        self.add_feature_selector = OptimiseFeatureSelector(
+            options=add_fs_options,
+            name="additive_feature_selector",
+            use_cache=use_fs_cache,
+        )
+        self.add_transformer = OptimiseDistTransformer(
+            ploidy=ploidy,
+            options=["noia_additive"],
+            name="additive_dist",
+        )
+
+        self.dom_feature_selector = OptimiseFeatureSelector(
+            options=dom_fs_options,
+            name="dominance_feature_selector",
+            use_cache=use_fs_cache,
+        )
+        self.dom_transformer = OptimiseDistTransformer(
+            ploidy=ploidy,
+            options=["noia_dominance"],
+            name="dominance_dist",
+        )
+
+        self.epiadd_feature_selector = OptimiseFeatureSelector(
+            options=epiadd_fs_options,
+            name="additive_epistasis_feature_selector",
+            use_cache=use_fs_cache,
+        )
+        self.epiadd_transformer = OptimiseAddEpistasis()
+
+        self.epidom_feature_selector = OptimiseFeatureSelector(
+            options=epidom_fs_options,
+            name="dominance_epistasis_feature_selector",
+            use_cache=use_fs_cache,
+        )
+        self.epidom_transformer = OptimiseDomEpistasis()
+
+        self.epiaddxdom_feature_selector = OptimiseFeatureSelector(
+            options=epiaddxdom_fs_options,
+            name="addxdom_epistasis_feature_selector",
+            use_cache=use_fs_cache,
+        )
+        self.epiaddxdom_transformer = OptimiseAddDomEpistasis()
+        return
+
+    def _sample_feature_selector(
+        self,
+        trial,
+        params,
+        transformer,
+        markers,
+        groups,
+        covariates,
+        y,
+        model_paths,
+    ):
+        from selectml.higher import ffmap2
+        (
+            params,
+            feature_selection_models,
+            markers,
+            feature_selection_use_markers,
+            feature_selection_use_groups,
+            feature_selection_use_covariates
+        ) = self._sample_extended_step(
+            trial,
+            params,
+            transformer,
+            markers=markers,
+            groups=groups,
+            covariates=covariates,
+            y=y,
+        )
+
+        feature_selection_inputs = []
+        if feature_selection_use_markers:
+            feature_selection_inputs.append([
+                mi.X_input for mi in model_paths
+            ])
+
+        if feature_selection_use_groups:
+            feature_selection_inputs.append([
+                mi.grouping_model for mi in model_paths
+            ])
+
+        if feature_selection_use_covariates:
+            feature_selection_inputs.append([
+                mi.covariate_model for mi in model_paths
+            ])
+
+        if len(feature_selection_inputs) == 1:
+            feature_selection_models = [
+                ffmap2(fsm, inp, mi.y_input)
+                for fsm, inp, mi
+                in zip(
+                    feature_selection_models,
+                    feature_selection_inputs[0],
+                    model_paths
+                )
+            ]
+        else:
+            feature_selection_models = [
+                ffmap2(fsm, inp, mi.y_input)
+                for fsm, inp, mi
+                in zip(
+                    feature_selection_models,
+                    map(list, zip(*feature_selection_inputs)),
+                    model_paths
+                )
+            ]
+        return params, markers, feature_selection_models
+
+    def _sample_preprocessing(  # noqa
+        self,
+        trial: "optuna.Trial",
+        cv: "Sequence[Dataset]",
+    ):
+
+        from selectml.higher import ffmap
+        from baikal import Input
+
+        params: "Params" = {}
+        X: "List[Optional[np.ndarray]]" = [cvi.markers for cvi in cv]
+        assert not any(xi is None for xi in X)
+        y: "List[Optional[np.ndarray]]" = [cvi.y for cvi in cv]
+
+        assert not any(len(yi.shape) != 2 for yi in y)
+        assert not any(yi is None for yi in y)
+        g: "List[Optional[np.ndarray]]" = [cvi.groups for cvi in cv]
+        c: "List[Optional[np.ndarray]]" = [cvi.covariates for cvi in cv]
+
+        model_paths = []
+        for xi, yi, gi, ci in zip(X, y, g, c):
+            assert yi is not None
+
+            mi = ModelPath(
+                X_input=Input(name="markers"),
+                y_input=Input(name="y"),
+                g_input=None if (gi is None) else Input(name="groups"),
+                c_input=None if (ci is None) else Input(name="covariates"),
+            )
+            model_paths.append(mi)
+
+        params, target_models, y_ = self._sample_preprocessing_step(
+            trial,
+            params,
+            self.target_transformer,
+            y,
+            assert_not_none=True,
+            drop_if_none=False,
+        )
+
+        for mi, tm in zip(model_paths, target_models):
+            mi.target_model = tm(mi.y_input)
+
+        for mi, tm in zip(model_paths, target_models):
+            mi.target_transformer = tm
+
+        params, covariate_models, c = self._sample_preprocessing_step(
+            trial,
+            params,
+            self.covariate_transformer,
+            c,
+        )
+        for mi, cm in zip(model_paths, covariate_models):
+            mi.covariate_model = ffmap(cm, mi.c_input)
+
+        params, grouping_models, g = self._sample_preprocessing_step(
+            trial,
+            params,
+            self.grouping_transformer,
+            g,
+        )
+        for mi, gm in zip(model_paths, grouping_models):
+            mi.grouping_model = ffmap(gm, mi.g_input)
+
+        params, X_marker, feature_selection_models = self._sample_feature_selector(  # noqa
+            trial,
+            params,
+            self.marker_feature_selector,
+            X,
+            g,
+            c,
+            y,
+            model_paths
+        )
+
+        params, marker_models, X_marker = self._sample_preprocessing_step(
+            trial,
+            params,
+            self.marker_transformer,
+            X_marker,
+        )
+
+        for mi, mm, fs in zip(
+            model_paths,
+            marker_models,
+            feature_selection_models
+        ):
+            mi.marker_model = ffmap(mm, fs)
+
+        params, X_add, add_feature_selection_models = self._sample_feature_selector(  # noqa
+            trial,
+            params,
+            self.add_feature_selector,
+            X,
+            g,
+            c,
+            y,
+            model_paths
+        )
+
+        params, add_models, X_add = self._sample_preprocessing_step(
+            trial,
+            params,
+            self.add_transformer,
+            X_add,
+        )
+
+        for mi, mm, fs in zip(
+            model_paths,
+            add_models,
+            add_feature_selection_models
+        ):
+            mi.additive_model = ffmap(mm, fs)
+
+        params, X_dom, dom_feature_selection_models = self._sample_feature_selector(  # noqa
+            trial,
+            params,
+            self.dom_feature_selector,
+            X,
+            g,
+            c,
+            y,
+            model_paths
+        )
+
+        params, dom_models, X_dom = self._sample_preprocessing_step(
+            trial,
+            params,
+            self.dom_transformer,
+            X_dom,
+        )
+
+        for mi, mm, fs in zip(
+            model_paths,
+            dom_models,
+            dom_feature_selection_models
+        ):
+            mi.dominance_model = ffmap(mm, fs)
+
+        params, X_epiadd, epiadd_feature_selection_models = self._sample_feature_selector(  # noqa
+            trial,
+            params,
+            self.epiadd_feature_selector,
+            X,
+            g,
+            c,
+            y,
+            model_paths
+        )
+
+        params, epiadd_models, X_epiadd = self._sample_preprocessing_step(
+            trial,
+            params,
+            self.epiadd_transformer,
+            X_epiadd,
+        )
+
+        for mi, mm, fs in zip(
+            model_paths,
+            epiadd_models,
+            epiadd_feature_selection_models
+        ):
+            mi.epistasis_add_model = ffmap(mm, fs)
+
+        params, X_epidom, epidom_feature_selection_models = self._sample_feature_selector(  # noqa
+            trial,
+            params,
+            self.epidom_feature_selector,
+            X,
+            g,
+            c,
+            y,
+            model_paths
+        )
+
+        params, epidom_models, X_epidom = self._sample_preprocessing_step(
+            trial,
+            params,
+            self.epidom_transformer,
+            X_epidom,
+        )
+
+        for mi, mm, fs in zip(
+            model_paths,
+            epidom_models,
+            epidom_feature_selection_models
+        ):
+            mi.epistasis_dom_model = ffmap(mm, fs)
+
+        params, X_epiaddxdom, epiaddxdom_feature_selection_models = self._sample_feature_selector(  # noqa
+            trial,
+            params,
+            self.epiaddxdom_feature_selector,
+            X,
+            g,
+            c,
+            y,
+            model_paths
+        )
+
+        params, epiaddxdom_models, X_epiaddxdom = self._sample_preprocessing_step(  # noqa
+            trial,
+            params,
+            self.epiaddxdom_transformer,
+            X_epiaddxdom,
+        )
+
+        for mi, mm, fs in zip(
+            model_paths,
+            epiaddxdom_models,
+            epiaddxdom_feature_selection_models
+        ):
+            mi.epistasis_addxdom_model = ffmap(mm, fs)
+
+        data_paths = []
+        for cvi, yi, xmi, xai, xdi, xeai, xedi, xeadi, ci, gi in zip(
+            cv,
+            y_,
+            X_marker,
+            X_add,
+            X_dom,
+            X_epiadd,
+            X_epidom,
+            X_epiaddxdom,
+            c,
+            g
+        ):
+            assert yi is not None
+            data_paths.append(DataPath(
+                cv=cvi,
+                y=yi,
+                X_marker=xmi,
+                X_add=xai,
+                X_dom=xdi,
+                X_epiadd=xeai,
+                X_epidom=xedi,
+                X_epiaddxdom=xeadi,
+                covariates=ci,
+                groups=gi,
+            ))
+
+        return params, model_paths, data_paths
+
+    def _model_preprocessing(  # noqa: C901
+        self,
+        params: "Params",
+        data: "Dataset",
+        **kwargs
+    ):
+        from baikal import Input
+        from selectml.higher import ffmap, ffmap2
+
+        X_input = Input(name="markers")
+        y_input = Input(name="y")
+        g_input = None if data.groups is None else Input(name="groups")
+        c_input = None if data.covariates is None else Input(name="covariates")
+
+        target_transformer = self.target_transformer.model(params)
+        target = ffmap(target_transformer, y_input)
+
+        covariates = ffmap(self.covariate_transformer.model(params), c_input)
+        groups = ffmap(self.grouping_transformer.model(params), g_input)
+
+        if self.marker_feature_selector is not None:
+            marker_fs = self.marker_feature_selector.model(params)
+            if isinstance(marker_fs, MyModel):
+                marker_fs_inputs = [
+                    i for
+                    i in [X_input, g_input, c_input]
+                    if i is not None
+                ]
+                marker_fs = marker_fs(marker_fs_inputs, y_input)
+            else:
+                marker_fs = ffmap2(
+                    marker_fs,
+                    X_input,
+                    y_input
+                )
+        else:
+            marker_fs = None
+
+        markers = ffmap(
+            self.marker_transformer.model(params),
+            marker_fs
+        )
+
+        if self.add_feature_selector is not None:
+            add_fs = self.add_feature_selector.model(params)
+            if isinstance(add_fs, MyModel):
+                add_fs_inputs = [
+                    i for
+                    i in [X_input, g_input, c_input]
+                    if i is not None
+                ]
+                add_fs = add_fs(add_fs_inputs, y_input)
+            else:
+                add_fs = ffmap2(
+                    add_fs,
+                    X_input,
+                    y_input
+                )
+        else:
+            add_fs = None
+
+        adds = ffmap(self.add_transformer.model(params), add_fs)
+
+        if self.dom_feature_selector is not None:
+            dom_fs = self.dom_feature_selector.model(params)
+            if isinstance(dom_fs, MyModel):
+                dom_fs_inputs = [
+                    i for
+                    i in [X_input, g_input, c_input]
+                    if i is not None
+                ]
+                dom_fs = dom_fs(dom_fs_inputs, y_input)
+            else:
+                dom_fs = ffmap2(
+                    dom_fs,
+                    X_input,
+                    y_input
+                )
+        else:
+            dom_fs = None
+
+        doms = ffmap(
+            self.dom_transformer.model(params),
+            dom_fs
+        )
+
+        if self.epiadd_feature_selector is not None:
+            epiadd_fs = self.epiadd_feature_selector.model(params)
+            if isinstance(epiadd_fs, MyModel):
+                epiadd_fs_inputs = [
+                    i for
+                    i in [X_input, g_input, c_input]
+                    if i is not None
+                ]
+                epiadd_fs = epiadd_fs(epiadd_fs_inputs, y_input)
+            else:
+                epiadd_fs = ffmap2(
+                    epiadd_fs,
+                    X_input,
+                    y_input
+                )
+        else:
+            epiadd_fs = None
+
+        epiadds = ffmap(
+            self.epiadd_transformer.model(params),
+            epiadd_fs
+        )
+
+        if self.epidom_feature_selector is not None:
+            epidom_fs = self.epidom_feature_selector.model(params)
+            if isinstance(epidom_fs, MyModel):
+                epidom_fs_inputs = [
+                    i for
+                    i in [X_input, g_input, c_input]
+                    if i is not None
+                ]
+                epidom_fs = epidom_fs(epidom_fs_inputs, y_input)
+            else:
+                epidom_fs = ffmap2(
+                    epidom_fs,
+                    X_input,
+                    y_input
+                )
+        else:
+            epidom_fs = None
+
+        epidoms = ffmap(
+            self.epidom_transformer.model(params),
+            epidom_fs
+        )
+
+        if self.epiaddxdom_feature_selector is not None:
+            epiaddxdom_fs = self.epiaddxdom_feature_selector.model(params)
+            if isinstance(epiaddxdom_fs, MyModel):
+                epiaddxdom_fs_inputs = [
+                    i for
+                    i in [X_input, g_input, c_input]
+                    if i is not None
+                ]
+                epiaddxdom_fs = epiaddxdom_fs(epiaddxdom_fs_inputs, y_input)
+            else:
+                epiaddxdom_fs = ffmap2(
+                    epiaddxdom_fs,
+                    X_input,
+                    y_input
+                )
+        else:
+            epiaddxdom_fs = None
+
+        epiaddxdoms = ffmap(
+            self.epiaddxdom_transformer.model(params),
+            epiaddxdom_fs
+        )
+
+        return ModelPath(
+            X_input=X_input,
+            y_input=y_input,
+            g_input=g_input,
+            c_input=c_input,
+            target_transformer=target_transformer,
+            target_model=target,
+            grouping_model=groups,
+            covariate_model=covariates,
+            marker_model=markers,
+            additive_model=adds,
+            dominance_model=doms,
+            epistasis_add_model=epiadds,
+            epistasis_dom_model=epidoms,
+            epistasis_addxdom_model=epiaddxdoms,
+        )
+
+    def _sample_bglr_step(  # noqa: C901
+        self,
+        trial: "optuna.Trial",
+        params: "Params",
+        transformer: "Optional[OptimiseBase]",
+        markers: "List[Optional[np.ndarray]]",
+        adds: "List[Optional[np.ndarray]]",
+        doms: "List[Optional[np.ndarray]]",
+        epiadds: "List[Optional[np.ndarray]]",
+        epidoms: "List[Optional[np.ndarray]]",
+        epiaddxdoms: "List[Optional[np.ndarray]]",
+        groups: "List[Optional[np.ndarray]]",
+        covariates: "List[Optional[np.ndarray]]",
+        y: "Optional[List[Optional[np.ndarray]]]",
+        predict: bool = True,
+        assert_not_none: bool = True,
+        drop_if_none: bool = False,
+    ) -> "Tuple[Params, List[Model], List[Optional[np.ndarray]]]":
+        from copy import copy
+        from itertools import cycle
+        from selectml.higher import ffmap
+
+        params = copy(params)
+
+        if (transformer is not None):
+            trans_params = transformer.sample(
+                trial,
+                Xs=markers,
+                adds=adds,
+                doms=doms,
+                epiadds=epiadds,
+                epidoms=epidoms,
+                epiaddxdoms=epiaddxdoms,
+                groups=groups,
+                covariates=covariates,
+            )
+            params.update(trans_params)
+
+            use_markers = f"{transformer.name}_markers" in params  # noqa: E501
+            use_add = f"{transformer.name}_add" in params
+            use_dom = f"{transformer.name}_dom" in params
+            use_epiadd = f"{transformer.name}_epiadd" in params
+            use_epidom = f"{transformer.name}_epidom" in params
+            use_epiaddxdom = f"{transformer.name}_epiaddxdom" in params  # noqa: E501
+            use_groups = f"{transformer.name}_groups" in params
+            use_covariates = f"{transformer.name}_covariates" in params  # noqa: E501
+
+            data: "List[List[np.ndarray]]" = []
+            if use_markers and all(d is not None for d in markers):
+                data.append(cast("List[np.ndarray]", markers))
+
+            if use_add:
+                assert all(d is not None for d in adds)
+                data.append(cast("List[np.ndarray]", adds))
+
+            if use_dom:
+                assert all(d is not None for d in doms)
+                data.append(cast("List[np.ndarray]", doms))
+
+            if use_epiadd:
+                assert all(d is not None for d in epiadds)
+                data.append(cast("List[np.ndarray]", epiadds))
+
+            if use_epidom:
+                assert all(d is not None for d in epidoms)
+                data.append(cast("List[np.ndarray]", epidoms))
+
+            if use_epiaddxdom:
+                assert all(d is not None for d in epiaddxdoms)
+                data.append(cast("List[np.ndarray]", epiaddxdoms))
+
+            if use_groups:
+                assert all(d is not None for d in groups)
+                data.append(cast("List[np.ndarray]", groups))
+
+            if use_covariates:
+                assert all(d is not None for d in covariates)
+                data.append(cast("List[np.ndarray]", covariates))
+
+            if len(data) == 1:
+                data_: "Union[List[np.ndarray], List[List[np.ndarray]]]" = data[0]  # noqa: E501
+            elif len(data) > 1:
+                data_ = list(map(lambda x: list(x), zip(*data)))
+            else:
+                raise ValueError(f"didn't get enough data, {data} \n {params}")
+
+            if y is not None:
+                models: "List[Optional[Model]]" = list(map(
+                    transformer.fit,
+                    cycle([params]),
+                    data_,
+                    y
+                ))
+            else:
+                models = list(map(
+                    transformer.fit,
+                    cycle([params]),
+                    data_
+                ))
+
+            if assert_not_none:
+                assert not any(m is None for m in models)
+
+            if predict:
+                attr = "predict"
+            else:
+                attr = "transform"
+
+            def safe_attr(cls, attr):
+                if cls is None:
+                    return None
+                else:
+                    return getattr(cls, attr)
+
+            dataout: "List[Optional[np.ndarray]]" = [
+                ffmap(safe_attr(mi, attr), di)
+                for mi, di
+                in zip(models, data_)
+            ]
+        else:
+            models = [None for _ in markers]
+
+            if drop_if_none:
+                dataout = [None for _ in markers]
+            else:
+                dataout = markers
+
+        if (
+            any(m is None for m in models)
+            and not all(m is None for m in models)
+        ):
+            raise ValueError("Either all models are None, or none are None.")
+
+        if (
+            any(d is None for d in dataout)
+            and not all(d is None for d in dataout)
+        ):
+            raise ValueError("Either all data is None, or no data is None.")
+
+        return params, models, dataout
+
+
+    def sample(  # noqa
+        self,
+        trial: "optuna.Trial",
+        cv: "List[Dataset]",
+    ):
+        from selectml.optimiser.wrapper import Make2D, Make1D
+
+        from selectml.higher import ffmap2, fmap
+        (
+            params,
+            model_paths,
+            data_paths
+        ) = self._sample_preprocessing(trial, cv)
+
+        Xs = [d.X_marker for d in data_paths]
+        adds = [d.X_add for d in data_paths]
+        doms = [d.X_dom for d in data_paths]
+        epiadds = [d.X_epiadd for d in data_paths]
+        epidoms = [d.X_epidom for d in data_paths]
+        epiaddxdoms = [d.X_epiaddxdom for d in data_paths]
+        groups = [d.groups for d in data_paths]
+        covariates = [d.covariates for d in data_paths]
+        y = [d.y for d in data_paths]
+
+        params, predictor_models, yhat = self._sample_bglr_step(
+            trial=trial,
+            params=params,
+            transformer=self.predictor,
+            markers=Xs,
+            adds=adds,
+            doms=doms,
+            epiadds=epiadds,
+            epidoms=epidoms,
+            epiaddxdoms=epiaddxdoms,
+            y=y,
+            groups=groups,
+            covariates=covariates,
+            predict=True
+        )
+
+        bglr_inputs = []
+        if f"{self.predictor.name}_markers" in params:
+            bglr_inputs.append([m.marker_model for m in model_paths])
+
+        if f"{self.predictor.name}_add" in params:
+            bglr_inputs.append([m.additive_model for m in model_paths])
+
+        if f"{self.predictor.name}_dom" in params:
+            bglr_inputs.append([m.dominance_model for m in model_paths])
+
+        if f"{self.predictor.name}_epiadd" in params:
+            bglr_inputs.append([m.epistasis_add_model for m in model_paths])
+
+        if f"{self.predictor.name}_epidom" in params:
+            bglr_inputs.append([m.epistasis_dom_model for m in model_paths])
+
+        if f"{self.predictor.name}_epiaddxdom" in params:
+            bglr_inputs.append([m.epistasis_addxdom_model for m in model_paths])
+
+        if f"{self.predictor.name}_groups" in params:
+            bglr_inputs.append([m.grouping_model for m in model_paths])
+
+        if f"{self.predictor.name}_covariates" in params:
+            bglr_inputs.append([m.covariate_model for m in model_paths])
+
+        if len(bglr_inputs) == 1:
+            bglr_inputs = bglr_inputs[0]
+        else:
+            bglr_inputs = list(zip(*bglr_inputs))
+
+        predictor_models = [
+            ffmap2(pm, mi, Make1D()(mmi.target_model))
+            for pm, mi, mmi
+            in zip(predictor_models, bglr_inputs, model_paths)
+        ]
+
+        # Some models output 1d, others output 2D.
+        # We want consistency
+        two_d_models = [
+            fmap(Make2D(), pm)
+            for pm
+            in predictor_models
+        ]
+
+        def safe_partial(tm, pm):
+            if tm is None:
+                return pm
+            if pm is None:
+                return None
+
+            return tm(pm, compute_func="inverse_transform", trainable=False)
+
+        yhat_models = [
+            safe_partial(mp.target_transformer, pm)
+            for mp, pm
+            in zip(model_paths, two_d_models)
+        ]
+
+        def get_yhat(
+            mi: "Model",
+            yhi: "Optional[np.ndarray]"
+        ) -> "Optional[np.ndarray]":
+            if yhi is None:
+                return None
+            elif len(yhi.shape) == 1:
+                yhi_ = np.expand_dims(yhi, 1)
+            else:
+                yhi_ = cast("np.ndarray", yhi)
+
+            if mi.target_transformer is None:
+                return yhi_
+
+            else:
+                return mi.target_transformer.inverse_transform(yhi_)
+
+        yhat = [
+            get_yhat(mp, yi)
+            for mp, yi
+            in zip(model_paths, yhat)
+        ]
+
+        models = []
+        for mp, tdi in zip(model_paths, yhat_models):
+            any_x = any([
+                getattr(mp, a) is not None
+                for a in [
+                    "marker_model", "additive_model",
+                    "dominance_model", "epistasis_add_model",
+                    "epistasis_dom_model", "epistasis_addxdom_model",
+                ]]
+            )
+            inputs = []
+            if any_x:
+                inputs.append(mp.X_input)
+
+            if mp.grouping_model is not None:
+                inputs.append(mp.g_input)
+
+            if mp.covariate_model is not None:
+                inputs.append(mp.c_input)
+
+            models.append(Model(
+                inputs,
+                tdi,
+                mp.y_input
+            ))
+
+        return (
+            params,
+            models,
+            yhat,
+            None
+        )
+
+    def model(self, params, data: "Dataset") -> "Model":
+        from baikal.steps import ColumnStack
+        from selectml.optimiser.wrapper import Make2D, Make1D
+
+        fp = self._model_preprocessing(params, data)
+
+        target = fp.target_model
+
+        model = self.predictor.model(params)
+        preprocessed = []
+        if "markers" in model.component_names:
+            preprocessed.append(fp.marker_model)
+
+        if "add" in model.component_names:
+            preprocessed.append(fp.additive_model)
+
+        if "dom" in model.component_names:
+            preprocessed.append(fp.dominance_model)
+
+        if "epiadd" in model.component_names:
+            preprocessed.append(fp.epistasis_add_model)
+
+        if "epidom" in model.component_names:
+            preprocessed.append(fp.epistasis_dom_model)
+
+        if "epiaddxdom" in model.component_names:
+            preprocessed.append(fp.epistasis_addxdom_model)
+
+        if "groups" in model.component_names:
+            preprocessed.append(fp.grouping_model)
+
+        if "covariates" in model.component_names:
+            preprocessed.append(fp.covariate_model)
+
+        model2 = model(preprocessed, target)
+        yhat = fp.target_transformer(
+            model2,
+            compute_func="inverse_transform",
+            trainable=False
+        )
+
+        any_x = any([
+            getattr(fp, a) is not None
+            for a in [
+                "marker_model", "additive_model", "dominance_model",
+                "epistasis_add_model", "epistasis_dom_model",
+                "epistasis_addxdom_model"
+            ]]
         )
         inputs = [
             fp.X_input if any_x else None,

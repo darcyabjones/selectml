@@ -441,7 +441,7 @@ class BGLRRegressor(BaseEstimator, RegressorMixin):
         else:
             models_ = list(models)
 
-        assert len(models) > 0, "We need to know which models you want to use."
+        assert len(models_) > 0, f"We need to know which models you want to use. {models_}"
 
         if isinstance(component_names, str):
             component_names_: "Union[List[str], List[int]]" = [component_names]
@@ -694,6 +694,19 @@ class BGLRRegressor(BaseEstimator, RegressorMixin):
 
         return results
 
+    @staticmethod
+    def clip(x: np.ndarray) -> np.ndarray:
+        try:
+            info = np.finfo(x.dtype)
+        except ValueError as e:
+            try:
+                info = np.iinfo(x.dtype)
+            except Exception:
+                raise e
+
+        x = np.clip(x, info.min, info.max)
+        return x
+
     def predict(
         self,
         X
@@ -723,7 +736,7 @@ class BGLRRegressor(BaseEstimator, RegressorMixin):
         elif self.yndim_ == 1:
             yhat = yhat.ravel()
 
-        return yhat
+        return self.clip(yhat)
 
     def get_params(self, deep: bool = True) -> "Dict[str, Any]":
         from copy import deepcopy

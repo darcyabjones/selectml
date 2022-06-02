@@ -644,6 +644,9 @@ class NOIAAdditiveKernel(TransformerMixin, BaseEstimator):
     ):
         from .preprocessor import NOIAAdditiveScaler
         self.scaler = NOIAAdditiveScaler(AA=AA, Aa=Aa, aa=aa)
+        self.AA = AA
+        self.Aa = Aa
+        self.aa = aa
         self.copy = copy
         return
 
@@ -789,6 +792,9 @@ class NOIADominanceKernel(TransformerMixin, BaseEstimator):
     ):
         from .preprocessor import NOIADominanceScaler
         self.scaler = NOIADominanceScaler(AA=AA, Aa=Aa, aa=aa)
+        self.AA = AA
+        self.Aa = Aa
+        self.aa = aa
         self.copy = copy
         return
 
@@ -996,7 +1002,7 @@ class HadamardCovariance(TransformerMixin, BaseEstimator):
         B = self.b.transform(self.X_)
 
         AB = A * B
-        self.trace = AB.trace()
+        self.trace_ = AB.trace()
 
         self.n_features_in_ = self.X_.shape[1]
         self.n_features_ = self.X_.shape[0]
@@ -1059,11 +1065,11 @@ class HadamardCovariance(TransformerMixin, BaseEstimator):
         if X_.shape[1] != self.n_features_in_:
             raise ValueError("Must have same number of features")
 
-        A = self.a.transform(self.X_)
-        B = self.b.transform(self.X_)
+        A = self.a.transform(X_)
+        B = self.b.transform(X_)
 
         AB = A * B
-        return AB / (self.trace / self.X_.shape[0])
+        return AB / (self.trace_ / self.X_.shape[0])
 
 
 class SquaredEuclideanDistance(TransformerMixin, BaseEstimator):
