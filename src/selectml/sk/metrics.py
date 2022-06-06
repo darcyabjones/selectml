@@ -41,13 +41,20 @@ def pearsons_correlation(
             category=PearsonRConstantInputWarning,
         )
         for i in range(x_.shape[1]):
-            cor, _ = pearsonr(x_[:, i], y_[:, i])
+            if (
+                (y_[0, i] == y_[:, i]).all()
+                or (x_[0, i] == x_[:, i]).all()
+            ):
+                cor = 0.0
+            else:
+                cor, _ = pearsonr(x_[:, i], y_[:, i])
             out[i] = cor
 
     if np.all(np.isnan(out)):
         return np.nan
     else:
         return np.nanmean(out)
+
 
 def spearmans_correlation(
     x: "npt.ArrayLike",
@@ -77,13 +84,20 @@ def spearmans_correlation(
             category=SpearmanRConstantInputWarning
         )
         for i in range(x_.shape[1]):
-            cor, _ = spearmanr(x_[:, i], y_[:, i])
+            if (
+                (y_[0, i] == y_[:, i]).all()
+                or (x_[0, i] == x_[:, i]).all()
+            ):
+                cor = 0.0
+            else:
+                cor, _ = spearmanr(x_[:, i], y_[:, i])
             out[i] = cor
 
     if np.all(np.isnan(out)):
         return np.nan
     else:
         return np.nanmean(out)
+
 
 def tau_correlation(
     x: "npt.ArrayLike",
@@ -108,7 +122,13 @@ def tau_correlation(
     # Note that spearmanr does accept multi-column
     # but it will then output a matrix of pairwise correlations..
     for i in range(x_.shape[1]):
-        cor, _ = kendalltau(x_[:, i], y_[:, i])
+        if (
+            (y_[0, i] == y_[:, i]).all()
+            or (x_[0, i] == x_[:, i]).all()
+        ):
+            cor = 0.0
+        else:
+            cor, _ = kendalltau(x_[:, i], y_[:, i])
         out[i] = cor
 
     if np.all(np.isnan(out)):

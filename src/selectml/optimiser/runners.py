@@ -1,3 +1,5 @@
+import random
+
 import numpy as np
 from dataclasses import dataclass
 from baikal import Step, Input, Model
@@ -16,15 +18,6 @@ if TYPE_CHECKING:
 from .cv import Dataset
 from .optimise import OptimiseBase
 from .optimise import MyModel
-
-
-from IPython.display import Image, display
-from baikal.plot import plot_model
-
-
-def view_pydot(pdot):
-    plt = Image(pdot.create_png())
-    display(plt)
 
 
 @dataclass
@@ -71,11 +64,11 @@ class DataPath:
     groups: "Optional[np.ndarray]" = None
     joined: "Optional[np.ndarray]" = None
     interactions: "Optional[np.ndarray]" = None
-    X_add: "Optional[np.ndarry]" = None
-    X_dom: "Optional[np.ndarry]" = None
-    X_epiadd: "Optional[np.ndarry]" = None
-    X_epidom: "Optional[np.ndarry]" = None
-    X_epiaddxdom: "Optional[np.ndarry]" = None
+    X_add: "Optional[np.ndarray]" = None
+    X_dom: "Optional[np.ndarray]" = None
+    X_epiadd: "Optional[np.ndarray]" = None
+    X_epidom: "Optional[np.ndarray]" = None
+    X_epiaddxdom: "Optional[np.ndarray]" = None
 
     def items(self):
         from dataclass import fields
@@ -94,6 +87,17 @@ class BaseRunner(object):
 
     Otherwise copy paste init to suit your needs.
     """
+
+    rng: random.Random
+
+    def __init__(
+        self,
+        task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        **kwargs,
+    ):
+        raise NotImplementedError("Subclasses must implement this.")
 
     def _init_preprocessors(
         self,
@@ -181,6 +185,8 @@ class BaseRunner(object):
         ],
         use_fs_cache: bool = True,
         use_covariate_polynomial: bool = True,
+        *kwargs,
+
     ):
         from selectml.optimiser.optimise import (
             OptimiseTarget,
@@ -205,17 +211,20 @@ class BaseRunner(object):
             options=marker_fs_options,
             name="marker_feature_selector",
             use_cache=use_fs_cache,
+            seed=self.rng.getrandbits(32),
         )
         self.marker_transformer = OptimiseMarkerTransformer(
             options=marker_options,
             ploidy=ploidy,
-            max_ncomponents=200
+            max_ncomponents=200,
+            seed=self.rng.getrandbits(32),
         )
 
         self.dist_feature_selector = OptimiseFeatureSelector(
             options=dist_fs_options,
             name="dist_feature_selector",
             use_cache=use_fs_cache,
+            seed=self.rng.getrandbits(32),
         )
         self.dist_transformer = OptimiseDistTransformer(
             ploidy=ploidy,
@@ -230,6 +239,7 @@ class BaseRunner(object):
             options=nonlinear_fs_options,
             name="nonlinear_feature_selector",
             use_cache=use_fs_cache,
+            seed=self.rng.getrandbits(32),
         )
         self.nonlinear_transformer = OptimiseNonLinear(
             options=nonlinear_options,
@@ -243,12 +253,14 @@ class BaseRunner(object):
 
         self.grouping_transformer = OptimiseGrouping(
             allow_pca=group_allow_pca,
-            max_ncomponents=50
+            max_ncomponents=50,
+            seed=self.rng.getrandbits(32),
         )
 
         self.interactions_transformer = OptimiseInteractions(
             options=interactions_options,
-            max_ncomponents=200
+            max_ncomponents=200,
+            seed=self.rng.getrandbits(32),
         )
         self.interactions_post_feature_selector = OptimisePostFeatureSelector(
             options=interactions_post_fs_options,
@@ -375,15 +387,17 @@ class BaseRunner(object):
             )
             params.update(trans_params)
 
-            use_markers = True
+            use_markers: bool = True
             use_groups = params.get(
                 f"{transformer.name}_use_groups",
                 False
             )
+            assert isinstance(use_groups, bool)
             use_covariates = params.get(
                 f"{transformer.name}_use_covariates",
                 False
             )
+            assert isinstance(use_covariates, bool)
 
             data: "List[List[np.ndarray]]" = []
             if all(d is not None for d in markers) and use_markers:
@@ -504,8 +518,8 @@ class BaseRunner(object):
         assert not any(xi is None for xi in X)
         y: "List[Optional[np.ndarray]]" = [cvi.y for cvi in cv]
 
-        assert not any(len(yi.shape) != 2 for yi in y)
         assert not any(yi is None for yi in y)
+        assert not any(len(cast("np.ndarray", yi).shape) != 2 for yi in y)
         g: "List[Optional[np.ndarray]]" = [cvi.groups for cvi in cv]
         c: "List[Optional[np.ndarray]]" = [cvi.covariates for cvi in cv]
 
@@ -1039,11 +1053,7 @@ class BaseRunner(object):
     def fit(cls, model, data: "Dataset"):
         assert data.y is not None
         inputs = cls._select_inputs(model, data)
-        try:
-            return model.fit(inputs, data.y)
-        except Exception as e:
-            view_pydot(plot_model(model))
-            raise e
+        return model.fit(inputs, data.y)
 
     @classmethod
     def predict(cls, model: "Model", data: "Dataset") -> "np.ndarray":
@@ -1057,7 +1067,9 @@ class SKRunner(BaseRunner):
     def __init__(
         self,
         task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
-        ploidy: int = 2
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        **kwargs
     ):
         raise NotImplementedError("Subclasses must implement this.")
 
@@ -1238,7 +1250,9 @@ class TFRunner(SKRunner):
     def __init__(
         self,
         task: "Literal['regression', 'ranking', 'classification']",
-        ploidy: int = 2
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        *kwargs,
     ):
         from selectml.optimiser.optimise import OptimiseConvMLP
 
@@ -1283,6 +1297,8 @@ class TFRunner(SKRunner):
             raise ValueError(
                 "task must be regression, ranking, "
                 "ordinal or classification.")
+
+        self.rng = random.Random(seed)
 
         # Keras seems to override something to do with deepcopy or mutexes
         # that means we can't cache the feature selector.
@@ -1591,7 +1607,9 @@ class BGLRSKRunner(SKRunner):
     def __init__(
         self,
         task: "Literal['regression', 'ranking', 'ordinal']",
-        ploidy: int = 2
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        *kwargs,
     ):
         from selectml.optimiser.optimise import OptimiseSKBGLR
 
@@ -1604,7 +1622,7 @@ class BGLRSKRunner(SKRunner):
                 "mutual_info_regression"
             ]
         elif task == "ranking":
-            objective: "Literal['gaussian', 'ordinal']" = 'gaussian'
+            objective = 'gaussian'
             target = ["passthrough", "stdnorm", "quantile"]
             post_fs_options = [
                 "passthrough",
@@ -1612,7 +1630,7 @@ class BGLRSKRunner(SKRunner):
                 "mutual_info_regression"
             ]
         elif task == "ordinal":
-            objective: "Literal['gaussian', 'ordinal']" = 'ordinal'
+            objective = 'ordinal'
             target = ["passthrough"]
             post_fs_options = [
                 "passthrough",
@@ -1623,6 +1641,8 @@ class BGLRSKRunner(SKRunner):
             raise ValueError(
                 "task must be regression, ranking, "
                 "ordinal.")
+
+        self.rng = random.Random(seed)
 
         self._init_preprocessors(
             ploidy=ploidy,
@@ -1937,7 +1957,7 @@ class BGLRSKRunner(SKRunner):
 
         model2 = model(preprocessed, target)
         yhat = fp.target_transformer(
-            model,
+            model2,
             compute_func="inverse_transform",
             trainable=False
         )
@@ -1962,7 +1982,10 @@ class BGLRRunner(BaseRunner):
     def __init__(
         self,
         task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
-        ploidy: int = 2
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        *kwargs,
+
     ):
         from selectml.optimiser.optimise import OptimiseBGLR
 
@@ -1970,15 +1993,17 @@ class BGLRRunner(BaseRunner):
             objective: "Literal['gaussian', 'ordinal']" = 'gaussian'
             target = ["stdnorm", "quantile"]
         elif task == "ranking":
-            objective: "Literal['gaussian', 'ordinal']" = 'gaussian'
+            objective = 'gaussian'
             target = ["passthrough", "stdnorm", "quantile"]
         elif task == "ordinal":
-            objective: "Literal['gaussian', 'ordinal']" = 'ordinal'
+            objective = 'ordinal'
             target = ["passthrough"]
         else:
             raise ValueError(
                 "task must be regression, ranking, "
                 "ordinal.")
+
+        self.rng = random.Random(seed)
 
         self._init_bglr_preprocessors(
             target_options=target,
@@ -2075,13 +2100,15 @@ class BGLRRunner(BaseRunner):
 
         self.grouping_transformer = OptimiseGrouping(
             allow_pca=group_allow_pca,
-            max_ncomponents=50
+            max_ncomponents=50,
+            seed=self.rng.getrandbits(32),
         )
 
         self.marker_feature_selector = OptimiseFeatureSelector(
             options=marker_fs_options,
             name="marker_feature_selector",
             use_cache=use_fs_cache,
+            seed=self.rng.getrandbits(32),
         )
         self.marker_transformer = OptimiseMarkerTransformer(
             options=marker_options,
@@ -2093,6 +2120,7 @@ class BGLRRunner(BaseRunner):
             options=add_fs_options,
             name="additive_feature_selector",
             use_cache=use_fs_cache,
+            seed=self.rng.getrandbits(32),
         )
         self.add_transformer = OptimiseDistTransformer(
             ploidy=ploidy,
@@ -2104,6 +2132,7 @@ class BGLRRunner(BaseRunner):
             options=dom_fs_options,
             name="dominance_feature_selector",
             use_cache=use_fs_cache,
+            seed=self.rng.getrandbits(32),
         )
         self.dom_transformer = OptimiseDistTransformer(
             ploidy=ploidy,
@@ -2115,6 +2144,7 @@ class BGLRRunner(BaseRunner):
             options=epiadd_fs_options,
             name="additive_epistasis_feature_selector",
             use_cache=use_fs_cache,
+            seed=self.rng.getrandbits(32),
         )
         self.epiadd_transformer = OptimiseAddEpistasis()
 
@@ -2122,6 +2152,7 @@ class BGLRRunner(BaseRunner):
             options=epidom_fs_options,
             name="dominance_epistasis_feature_selector",
             use_cache=use_fs_cache,
+            seed=self.rng.getrandbits(32),
         )
         self.epidom_transformer = OptimiseDomEpistasis()
 
@@ -2129,6 +2160,7 @@ class BGLRRunner(BaseRunner):
             options=epiaddxdom_fs_options,
             name="addxdom_epistasis_feature_selector",
             use_cache=use_fs_cache,
+            seed=self.rng.getrandbits(32),
         )
         self.epiaddxdom_transformer = OptimiseAddDomEpistasis()
         return
@@ -2214,8 +2246,8 @@ class BGLRRunner(BaseRunner):
         assert not any(xi is None for xi in X)
         y: "List[Optional[np.ndarray]]" = [cvi.y for cvi in cv]
 
-        assert not any(len(yi.shape) != 2 for yi in y)
         assert not any(yi is None for yi in y)
+        assert not any(len(cast("np.ndarray", yi).shape) != 2 for yi in y)
         g: "List[Optional[np.ndarray]]" = [cvi.groups for cvi in cv]
         c: "List[Optional[np.ndarray]]" = [cvi.covariates for cvi in cv]
 
@@ -2814,7 +2846,11 @@ class BGLRRunner(BaseRunner):
             bglr_inputs.append([m.epistasis_dom_model for m in model_paths])
 
         if f"{self.predictor.name}_epiaddxdom" in params:
-            bglr_inputs.append([m.epistasis_addxdom_model for m in model_paths])
+            bglr_inputs.append([
+                m.epistasis_addxdom_model
+                for m
+                in model_paths
+            ])
 
         if f"{self.predictor.name}_groups" in params:
             bglr_inputs.append([m.grouping_model for m in model_paths])
@@ -2912,9 +2948,6 @@ class BGLRRunner(BaseRunner):
         )
 
     def model(self, params, data: "Dataset") -> "Model":
-        from baikal.steps import ColumnStack
-        from selectml.optimiser.wrapper import Make2D, Make1D
-
         fp = self._model_preprocessing(params, data)
 
         target = fp.target_model
@@ -2974,7 +3007,10 @@ class XGBRunner(SKRunner):
     def __init__(
         self,
         task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
-        ploidy: int = 2
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        *kwargs,
+
     ):
         from selectml.optimiser.optimise import OptimiseXGB
 
@@ -2990,10 +3026,8 @@ class XGBRunner(SKRunner):
             objectives = [
                 "reg:squarederror",
                 "rank:pairwise",
-                "reg:logistic",
-                "binary:logistic"
             ]
-            target = ["passthrough", "stdnorm", "quantile", "ordinal"]
+            target = ["passthrough", "stdnorm", "quantile"]
             post_fs_options = [
                 "passthrough",
                 "f_regression",
@@ -3020,6 +3054,8 @@ class XGBRunner(SKRunner):
                 "task must be regression, ranking, "
                 "ordinal, or classification.")
 
+        self.rng = random.Random(seed)
+
         self._init_preprocessors(
             ploidy=ploidy,
             target_options=target,
@@ -3039,7 +3075,10 @@ class NGBRunner(SKRunner):
     def __init__(
         self,
         task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
-        ploidy: int = 2
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        *kwargs,
+
     ):
         from .optimise import OptimiseNGB
 
@@ -3090,6 +3129,8 @@ class NGBRunner(SKRunner):
             use_covariate_polynomial=False,
         )
 
+        self.rng = random.Random(seed)
+
         self.predictor = OptimiseNGB(distribution=objectives)
         return
 
@@ -3099,7 +3140,10 @@ class SVMRunner(SKRunner):
     def __init__(
         self,
         task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
-        ploidy: int = 2
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        *kwargs,
+
     ):
         from .optimise import OptimiseSVM
 
@@ -3140,6 +3184,8 @@ class SVMRunner(SKRunner):
                 "task must be regression, ranking, "
                 "ordinal, or classification.")
 
+        self.rng = random.Random(seed)
+
         self._init_preprocessors(
             ploidy=ploidy,
             target_options=target,
@@ -3159,7 +3205,10 @@ class SGDRunner(SKRunner):
     def __init__(
         self,
         task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
-        ploidy: int = 2
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        *kwargs,
+
     ):
         from .optimise import OptimiseSGD
 
@@ -3222,6 +3271,8 @@ class SGDRunner(SKRunner):
                 "task must be regression, ranking, "
                 "ordinal, or classification.")
 
+        self.rng = random.Random(seed)
+
         self._init_preprocessors(
             ploidy=ploidy,
             target_options=target,
@@ -3241,7 +3292,10 @@ class LarsRunner(SKRunner):
     def __init__(
         self,
         task: "Literal['regression', 'ranking']",
-        ploidy: int = 2
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        *kwargs,
+
     ):
         from .optimise import OptimiseLars
 
@@ -3250,6 +3304,8 @@ class LarsRunner(SKRunner):
             "f_regression",
             "mutual_info_regression"
         ]
+
+        self.rng = random.Random(seed)
 
         self._init_preprocessors(
             ploidy=ploidy,
@@ -3270,7 +3326,10 @@ class RFRunner(SKRunner):
     def __init__(
         self,
         task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
-        ploidy: int = 2
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        *kwargs,
+
     ):
         from .optimise import OptimiseRF
 
@@ -3301,6 +3360,8 @@ class RFRunner(SKRunner):
             else:
                 target = ["passthrough"]
 
+        self.rng = random.Random(seed)
+
         self._init_preprocessors(
             ploidy=ploidy,
             target_options=target,
@@ -3320,12 +3381,15 @@ class KNNRunner(SKRunner):
     def __init__(
         self,
         task: "Literal['regression', 'ranking', 'ordinal', 'classification']",
-        ploidy: int = 2
+        ploidy: int = 2,
+        seed: "Optional[int]" = None,
+        *kwargs,
+
     ):
         from .optimise import OptimiseKNN
 
         if task in ("regression", "ranking"):
-            objective = "regression"
+            objective: "Literal['classification', 'regression']" = "regression"
             target = ["passthrough", "stdnorm", "quantile"]
             post_fs_options = [
                 "passthrough",
@@ -3352,6 +3416,8 @@ class KNNRunner(SKRunner):
             raise ValueError(
                 "task must be regression, ranking, "
                 "ordinal, or classification.")
+
+        self.rng = random.Random(seed)
 
         self._init_preprocessors(
             ploidy=ploidy,

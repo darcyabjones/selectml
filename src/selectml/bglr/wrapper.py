@@ -441,7 +441,7 @@ class BGLRRegressor(BaseEstimator, RegressorMixin):
         else:
             models_ = list(models)
 
-        assert len(models_) > 0, f"We need to know which models you want to use. {models_}"
+        assert len(models_) > 0, f"We need to know which models you want to use. {models_}"  # noqa: E501
 
         if isinstance(component_names, str):
             component_names_: "Union[List[str], List[int]]" = [component_names]
@@ -697,7 +697,7 @@ class BGLRRegressor(BaseEstimator, RegressorMixin):
     @staticmethod
     def clip(x: np.ndarray) -> np.ndarray:
         try:
-            info = np.finfo(x.dtype)
+            info: "Union[np.finfo, np.iinfo]" = np.finfo(x.dtype)
         except ValueError as e:
             try:
                 info = np.iinfo(x.dtype)

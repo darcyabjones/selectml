@@ -5,7 +5,7 @@ import numpy as np
 
 from baikal import Model
 
-from typing import TYPE_CHECKING
+from typing import cast, TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Union, Optional
     from typing import Dict, List, Literal, Sequence, Mapping
@@ -350,7 +350,7 @@ class OptimiseTarget(OptimiseBase):
         nfeatures: int,
         **kwargs
     ) -> "Params":
-        params = {}
+        params: "Params" = {}
 
         if nfeatures == 0:
             raise ValueError(
@@ -370,12 +370,10 @@ class OptimiseTarget(OptimiseBase):
                     ["uniform", "normal"]
                 )
             )
-            params[f"{self.name}_nquantiles"] = (
-                trial.suggest_int(
-                    f"{self.name}_nquantiles",
-                    min([100, round(nsamples / 2)]),
-                    min([1000, nsamples])
-                )
+            params[f"{self.name}_nquantiles"] = trial.suggest_int(
+                f"{self.name}_nquantiles",
+                min([100, round(nsamples / 2)]),
+                min([1000, nsamples])
             )
 
         return params
@@ -576,7 +574,7 @@ class OptimiseFeatureSelector(OptimiseBase):
         name: str = "feature_selector",
         gemma_exe: str = "gemma",
         use_cache: bool = True,
-        seed=None
+        seed: "Optional[int]" = None
     ):
         from threading import Lock
 
@@ -795,10 +793,10 @@ class OptimiseFeatureSelector(OptimiseBase):
     def select_inputs(
         model,
         data: "Union[List[np.ndarray], np.ndarray]",
-    ) -> "Dict[str, np.ndarray]":
+    ) -> "Dict[str, Union[List[np.ndarray], np.ndarray]]":
         from copy import copy
 
-        out = {}
+        out: "Dict[str, Union[List[np.ndarray], np.ndarray]]" = {}
         if isinstance(data, np.ndarray):
             out["markers"] = data
             return out
@@ -1340,7 +1338,12 @@ class OptimiseAddEpistasis(OptimiseBase):
         from .wrapper import NOIAAdditiveKernel, HadamardCovariance
 
         k = NOIAAdditiveKernel(AA=self.AA, Aa=self.Aa, aa=self.aa)
-        h = HadamardCovariance(a=k, b=k, fit_b=False, name=f"{self.name}_preprocessor")
+        h = HadamardCovariance(
+            a=k,
+            b=k,
+            fit_b=False,
+            name=f"{self.name}_preprocessor"
+        )
         return h
 
 
@@ -1396,7 +1399,12 @@ class OptimiseDomEpistasis(OptimiseBase):
         from .wrapper import NOIADominanceKernel, HadamardCovariance
 
         k = NOIADominanceKernel(AA=self.AA, Aa=self.Aa, aa=self.aa)
-        h = HadamardCovariance(a=k, b=k, fit_b=False, name=f"{self.name}_preprocessor")
+        h = HadamardCovariance(
+            a=k,
+            b=k,
+            fit_b=False,
+            name=f"{self.name}_preprocessor"
+        )
         return h
 
 
@@ -1883,9 +1891,11 @@ class OptimiseXGB(OptimiseSK):
         ],
         seed: "Optional[int]" = None,
         name: str = "xgb",
+        n_jobs: "Optional[int]" = None,
     ):
         self.objectives = objectives
         self.rng = random.Random(seed)
+        self.n_jobs = n_jobs
         self.name = name
         return
 
@@ -2002,7 +2012,7 @@ class OptimiseXGB(OptimiseSK):
             random_state=self.rng.getrandbits(32),
             max_depth=params[f"{self.name}_max_depth"],
             learning_rate=params[f"{self.name}_learning_rate"],
-            n_jobs=1,
+            n_jobs=self.n_jobs,
             verbosity=1,
             name=f"{self.name}",
         )
@@ -2054,10 +2064,13 @@ class OptimiseKNN(OptimiseSK):
         objective: "Literal['classification', 'regression']",
         seed: "Optional[int]" = None,
         name: str = "knn",
+        n_jobs: "Optional[int]" = None,
     ):
         self.rng = random.Random(seed)
         self.objective = objective
         self.name = name
+        self.n_jobs = n_jobs
+        self.rng = random.Random(seed)
         return
 
     def sample_params(
@@ -2114,7 +2127,7 @@ class OptimiseKNN(OptimiseSK):
             leaf_size=params[f"{self.name}_leaf_size"],
             algorithm=params[f"{self.name}_algorithm"],
             p=params[f"{self.name}_p"],
-            n_jobs=-1,
+            n_jobs=self.n_jobs,
             name=f"{self.name}",
         )
         return model
@@ -2152,10 +2165,12 @@ class OptimiseRF(OptimiseSK):
             "entropy",
         ],
         seed: "Optional[int]" = None,
+        n_jobs: "Optional[int]" = None,
         name: str = "rf",
     ):
         self.criterion = criterion
         self.rng = random.Random(seed)
+        self.n_jobs = n_jobs
         self.name = name
         return
 
@@ -2167,6 +2182,13 @@ class OptimiseRF(OptimiseSK):
         **kwargs
     ) -> "Params":
         params = {}
+
+        bootstrap = trial.suggest_categorical(
+            f"{self.name}_bootstrap",
+            [True, False]
+        )
+
+        params[f"{self.name}_bootstrap"] = bootstrap
         params.update({
             f"{self.name}_criterion": trial.suggest_categorical(
                 f"{self.name}_criterion",
@@ -2176,15 +2198,6 @@ class OptimiseRF(OptimiseSK):
                 f"{self.name}_max_features",
                 0.01,
                 1.0
-            ),
-            f"{self.name}_max_samples": trial.suggest_float(
-                f"{self.name}_max_samples",
-                0.01,
-                1.0
-            ),
-            f"{self.name}_bootstrap": trial.suggest_categorical(
-                f"{self.name}_bootstrap",
-                [True, False]
             ),
             f"{self.name}_max_depth": trial.suggest_int(
                 f"{self.name}_max_depth",
@@ -2207,16 +2220,21 @@ class OptimiseRF(OptimiseSK):
                 20
             ),
             f"{self.name}_min_impurity_decrease": trial.suggest_float(
-                "{self.name}_min_impurity_decrease",
+                f"{self.name}_min_impurity_decrease",
                 0,
                 1
             ),
         })
 
-        if params[f"{self.name}_bootstrap"]:
+        if bootstrap:
             params[f"{self.name}_oob_score"] = trial.suggest_categorical(
                 f"{self.name}_oob_score",
                 [True, False]
+            )
+            params[f"{self.name}_max_samples"] = trial.suggest_float(
+                f"{self.name}_max_samples",
+                0.01,
+                1.0
             )
         else:
             params[f"{self.name}_oob_score"] = False
@@ -2250,7 +2268,7 @@ class OptimiseRF(OptimiseSK):
         model = cls(
             criterion=criterion,
             max_depth=params[f"{self.name}_max_depth"],
-            max_samples=params[f"{self.name}_max_samples"],
+            max_samples=params.get(f"{self.name}_max_samples", None),
             n_estimators=params[f"{self.name}_n_estimators"],
             max_features=params[f"{self.name}_max_features"],
             min_samples_split=params[f"{self.name}_min_samples_split"],
@@ -2258,7 +2276,7 @@ class OptimiseRF(OptimiseSK):
             min_impurity_decrease=params[f"{self.name}_min_impurity_decrease"],
             bootstrap=params[f"{self.name}_bootstrap"],
             oob_score=oob_score,
-            n_jobs=-1,
+            n_jobs=self.n_jobs,
             random_state=self.rng.getrandbits(32),
             name=f"{self.name}",
         )
@@ -2292,10 +2310,12 @@ class OptimiseExtraTrees(OptimiseSK):
             "entropy",
         ],
         seed: "Optional[int]" = None,
+        n_jobs: "Optional[int]" = None,
         name: str = "extratrees",
     ):
         self.criterion = criterion
         self.rng = random.Random(seed)
+        self.n_jobs = n_jobs
         self.name = name
         return
 
@@ -2399,7 +2419,7 @@ class OptimiseExtraTrees(OptimiseSK):
             min_impurity_decrease=params[f"{self.name}_min_impurity_decrease"],
             bootstrap=params[f"{self.name}_bootstrap"],
             oob_score=oob_score,
-            n_jobs=-1,
+            n_jobs=self.n_jobs,
             random_state=self.rng.getrandbits(32),
             name=f"{self.name}",
         )
@@ -2791,15 +2811,31 @@ class OptimiseSGD(OptimiseSK):
                 f"{self.name}_fit_intercept",
                 [True, False],
             ),
-            f"{self.name}_max_iter": trial.suggest_categorical(
-                f"{self.name}_max_iter",
-                [max([1000, 2 * nsamples])],
-            ),
             f"{self.name}_learning_rate": trial.suggest_categorical(
                 f"{self.name}_learning_rate",
                 ["constant", "optimal", "invscaling", "adaptive"],
             ),
         })
+
+        max_iter: int = cast(int, trial.suggest_categorical(
+            f"{self.name}_max_iter",
+            [max([1000, 2 * nsamples])],
+        ))
+        params[f"{self.name}_max_iter"] = max_iter
+
+        use_average = trial.suggest_categorical(
+            f"{self.name}_use_average",
+            [True, False],
+        )
+        params[f"{self.name}_use_average"] = use_average
+
+        if use_average:
+            assert isinstance(max_iter, int)
+            params[f"{self.name}_average"] = trial.suggest_int(
+                f"{self.name}_average",
+                1,
+                round(max_iter / 2),
+            )
 
         if params[f"{self.name}_penalty"] == "elasticnet":
             params[f"{self.name}_l1_ratio"] = trial.suggest_float(
@@ -2881,7 +2917,8 @@ class OptimiseSGD(OptimiseSK):
                 power_t=params.get(f"{self.name}_power_t", 0.25),
                 loss=params[f"{self.name}_loss"],
                 random_state=self.rng.getrandbits(32),
-                name=f"{self.name}",
+                average=params.get(f"{self.name}_average", False),
+                name=str(self.name),
             )
         elif loss in (
             "hinge",
@@ -2903,7 +2940,8 @@ class OptimiseSGD(OptimiseSK):
                 loss=params[f"{self.name}_loss"],
                 random_state=self.rng.getrandbits(32),
                 class_weight=params[f"{self.name}_class_weight"],
-                name=f"{self.name}",
+                average=params.get(f"{self.name}_average", False),
+                name=str(self.name),
             )
         else:
             raise ValueError("This shouldn't be reachable")
@@ -3343,48 +3381,76 @@ class OptimiseBGLR(OptimiseSK):
         **kwargs
     ) -> "Optional[Model]":
         from .wrapper import BGLRRegressor
+        valid_models = [
+            'FIXED', 'BRR', 'BL',
+            'BayesA', 'BayesB', 'BayesC', 'RKHS'
+        ]
 
         bglr_models: "List[BGLR_MODELS]" = []
         bglr_names: "List[str]" = []
         if f"{self.name}_markers" in params:
-            bglr_models.append(params[f"{self.name}_markers"])
+            markers = params[f"{self.name}_markers"]
+            assert markers in valid_models
+            bglr_models.append(cast("BGLR_MODELS", markers))
             bglr_names.append("markers")
 
         if f"{self.name}_add" in params:
-            bglr_models.append(params[f"{self.name}_add"])
+            add = params[f"{self.name}_add"]
+            assert add in valid_models
+            bglr_models.append(cast("BGLR_MODELS", add))
             bglr_names.append("add")
 
         if f"{self.name}_dom" in params:
-            bglr_models.append(params[f"{self.name}_dom"])
+            dom = params[f"{self.name}_dom"]
+            assert dom in valid_models
+            bglr_models.append(cast("BGLR_MODELS", dom))
             bglr_names.append("dom")
 
         if f"{self.name}_epiadd" in params:
-            bglr_models.append(params[f"{self.name}_epiadd"])
+            epiadd = params[f"{self.name}_epiadd"]
+            assert epiadd in valid_models
+            bglr_models.append(cast("BGLR_MODELS", epiadd))
             bglr_names.append("epiadd")
 
         if f"{self.name}_epidom" in params:
-            bglr_models.append(params[f"{self.name}_epidom"])
+            epidom = params[f"{self.name}_epidom"]
+            assert epidom in valid_models
+            bglr_models.append(cast("BGLR_MODELS", epidom))
             bglr_names.append("epidom")
 
         if f"{self.name}_epiaddxdom" in params:
-            bglr_models.append(params[f"{self.name}_epiaddxdom"])
+            epiaddxdom = params[f"{self.name}_epiaddxdom"]
+            assert epiaddxdom in valid_models
+            bglr_models.append(cast("BGLR_MODELS", epiaddxdom))
             bglr_names.append("epiaddxdom")
 
         if f"{self.name}_groups" in params:
-            bglr_models.append(params[f"{self.name}_groups"])
+            groups = params[f"{self.name}_groups"]
+            assert groups in valid_models
+            bglr_models.append(cast("BGLR_MODELS", groups))
             bglr_names.append("groups")
 
         if f"{self.name}_covariates" in params:
-            bglr_models.append(params[f"{self.name}_covariates"])
+            covariates = params[f"{self.name}_covariates"]
+            assert covariates in valid_models
+            bglr_models.append(cast("BGLR_MODELS", covariates))
             bglr_names.append("covariates")
+
+        response_type = params.get(f"{self.name}_response_type", "gaussian")
+        assert response_type in ('gaussian', 'ordinal')
+        r2 = params.get(f"{self.name}_r2", 0.5)
+        assert isinstance(r2, float)
 
         model = BGLRRegressor(
             models=bglr_models,
             component_names=bglr_names,
             niter=10000,
             burnin=1000,
-            response_type=params.get(f"{self.name}_response_type", "gaussian"),
-            R2=params.get(f"{self.name}_r2", 0.5),
+            response_type=cast(
+                "Literal['gaussian', 'ordinal']",
+                response_type
+            ),
+            R2=r2,
             random_state=self.rng.getrandbits(32),
             verbose=False,
         )
@@ -3634,39 +3700,64 @@ class OptimiseSKBGLR(OptimiseSK):
     ) -> "Optional[Model]":
         from .wrapper import BGLRRegressor
 
+        valid_models = [
+            'FIXED', 'BRR', 'BL',
+            'BayesA', 'BayesB', 'BayesC', 'RKHS'
+        ]
+
         bglr_models: "List[BGLR_MODELS]" = []
         bglr_names: "List[str]" = []
         if f"{self.name}_markers" in params:
-            bglr_models.append(params[f"{self.name}_markers"])
+            markers = params[f"{self.name}_markers"]
+            assert markers in valid_models
+            bglr_models.append(cast("BGLR_MODELS", markers))
             bglr_names.append("markers")
 
         if f"{self.name}_dists" in params:
-            bglr_models.append(params[f"{self.name}_dists"])
+            dists = params[f"{self.name}_dists"]
+            assert dists in valid_models
+            bglr_models.append(cast("BGLR_MODELS", dists))
             bglr_names.append("dists")
 
         if f"{self.name}_nonlinear" in params:
-            bglr_models.append(params[f"{self.name}_nonlinear"])
+            nonlinear = params[f"{self.name}_nonlinear"]
+            assert nonlinear in valid_models
+            bglr_models.append(cast("BGLR_MODELS", nonlinear))
             bglr_names.append("nonlinear")
 
         if f"{self.name}_groups" in params:
-            bglr_models.append(params[f"{self.name}_groups"])
+            groups = params[f"{self.name}_groups"]
+            assert groups in valid_models
+            bglr_models.append(cast("BGLR_MODELS", groups))
             bglr_names.append("groups")
 
         if f"{self.name}_covariates" in params:
-            bglr_models.append(params[f"{self.name}_covariates"])
+            covariates = params[f"{self.name}_covariates"]
+            assert covariates in valid_models
+            bglr_models.append(cast("BGLR_MODELS", covariates))
             bglr_names.append("covariates")
 
         if f"{self.name}_interactions" in params:
-            bglr_models.append(params[f"{self.name}_interactions"])
+            interactions = params[f"{self.name}_interactions"]
+            assert interactions in valid_models
+            bglr_models.append(cast("BGLR_MODELS", interactions))
             bglr_names.append("interactions")
+        response_type = params.get(f"{self.name}_response_type", "gaussian")
+        assert response_type in ('gaussian', 'ordinal')
+
+        r2 = params.get(f"{self.name}_r2", 0.5)
+        assert isinstance(r2, float)
 
         model = BGLRRegressor(
             models=bglr_models,
             component_names=bglr_names,
             niter=10000,
             burnin=1000,
-            response_type=params.get(f"{self.name}_response_type", "gaussian"),
-            R2=params.get(f"{self.name}_r2", 0.5),
+            response_type=cast(
+                "Literal['gaussian', 'ordinal']",
+                response_type
+            ),
+            R2=r2,
             random_state=self.rng.getrandbits(32),
             verbose=False,
         )

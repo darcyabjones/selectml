@@ -1496,13 +1496,28 @@ class TFBase(BaseEstimator):
             self._random_state = self.random_state
 
         X_, y_ = self._validate_data(X, y, reset=True)
+        assert X_ is not None
+        assert y_ is not None
 
-        if len(y_.shape) == 1:
-            self.n_classes = 1
-        elif len(y_.shape) == 2:
-            self.n_classes = y_.shape[1]
+        def get_n(z: np.ndarray) -> int:
+            if len(z.shape) == 1:
+                return 1
+            elif len(z.shape) == 2:
+                return z.shape[1]
+            else:
+                raise ValueError("Can't do tensor outputs")
+
+        if isinstance(y_, np.ndarray):
+            self.n_classes: "Union[int, List[int], Dict[str, int]]" = get_n(y_)
+
+        elif isinstance(y_, list):
+            self.n_classes = [get_n(yi) for yi in y_]
+
+        elif isinstance(y_, dict):
+            self.n_classes = {k: get_n(yi) for k, yi in y_.items()}
+
         else:
-            raise ValueError("Can't do tensor outputs")
+            raise ValueError("y was an invalid type")
 
         self.model_ = self._build_keras_model()
         self._initialize_callbacks()
@@ -2048,6 +2063,7 @@ class ConvMLPWrapper(TFBase):
             "multiclass-multioutput",
             "multilabel-indicator"
         ):
+            assert isinstance(self.n_classes, int), "Cannot do multi output"
             n_output_units = self.n_classes
         else:
             raise ValueError("We can't handle this target type")
