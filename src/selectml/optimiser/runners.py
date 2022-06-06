@@ -99,6 +99,32 @@ class BaseRunner(object):
     ):
         raise NotImplementedError("Subclasses must implement this.")
 
+    def starting_points(self) -> "List[Params]":
+        import inspect
+        import copy
+
+        members = inspect.getmembers(self)
+
+        starting_points: "List[Params]" = []
+        for key, member in members:
+            if not isinstance(member, OptimiseBase):
+                continue
+
+            if len(starting_points) == 0:
+                starting_points.extend(member.starting_points())
+                continue
+
+            new_starting_points: "List[Params]" = []
+            for sp1 in starting_points:
+                for sp2 in member.starting_points():
+                    sp1 = copy.copy(sp1)
+                    sp1.update(copy.copy(sp2))
+                    new_starting_points.append(sp1)
+
+            starting_points = new_starting_points
+
+        return starting_points
+
     def _init_preprocessors(
         self,
         ploidy: int = 2,

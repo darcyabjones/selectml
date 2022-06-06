@@ -3,9 +3,11 @@
 import sys
 import argparse
 import json
+import contextlib
 
 import numpy as np
 import pandas as pd
+import optuna
 
 from ..optimiser.cv import CVData
 from ..optimiser.runners import BaseRunner
@@ -17,7 +19,6 @@ if TYPE_CHECKING:
     # from selectml.optimiser.optimise import BaseTypes
     from typing import Optional, List, Tuple
     from typing import Callable
-    import optuna
     TRACKER_TYPE = List[pd.Series]
 
 
@@ -50,20 +51,20 @@ def cli(parser: argparse.ArgumentParser) -> None:
     )
 
     parser.add_argument(
-        "-r", "--response",
+        "-r", "--response-col",
         type=str,
         help="The column to use from experiment as the y value"
     )
 
     parser.add_argument(
-        "-n", "--name-column",
+        "-n", "--name-col",
         type=str,
         default="name",
         help="The column to for names to align experiment and marker tables."
     )
 
     parser.add_argument(
-        "-g", "--groups",
+        "-g", "--group-cols",
         type=str,
         nargs="+",
         default=[],
@@ -74,7 +75,7 @@ def cli(parser: argparse.ArgumentParser) -> None:
     )
 
     parser.add_argument(
-        "-c", "--covariates",
+        "-c", "--covariate-cols",
         type=str,
         nargs="+",
         default=[],
@@ -113,7 +114,7 @@ def cli(parser: argparse.ArgumentParser) -> None:
     )
 
     parser.add_argument(
-        "--importances",
+        "--importance",
         type=argparse.FileType('w'),
         default=None,
         help="Where to write the output to. Default: stdout"
@@ -127,17 +128,24 @@ def cli(parser: argparse.ArgumentParser) -> None:
     )
 
     parser.add_argument(
-        "-n", "--ntrials",
+        "--ntrials",
         type=int,
         default=200,
         help="The number of iterations to try for optimisation."
     )
 
     parser.add_argument(
-        "-c", "--cpu",
+        "--cpu",
         type=int,
-        default=-1,
+        default=1,
         help="The number CPUs to use."
+    )
+
+    parser.add_argument(
+        "--ntasks",
+        type=int,
+        default=1,
+        help="The number of optuna tasks to use."
     )
 
     parser.add_argument(
@@ -194,6 +202,29 @@ def setup_optimise(
     return inner, tracker_
 
 
+class DummyContext(object):
+
+    @contextlib.contextmanager
+    def scope(self):
+        try:
+            yield None
+        finally:
+            pass
+        return None
+
+
+def check_tf_session(
+    n_threads: "Optional[int]" = None,
+):
+    import tensorflow as tf
+    if len(tf.config.list_physical_devices('GPU')) > 0:
+        return tf.distribute.MultiWorkerMirroredStrategy()
+    else:
+        tf.config.threading.set_inter_op_parallelism_threads(n_threads)
+        tf.config.threading.set_intra_op_parallelism_threads(n_threads)
+        return tf.distribute.get_strategy()
+
+
 def runner(args: argparse.Namespace) -> None:
 
     optuna.logging.set_verbosity(optuna.logging.INFO)
@@ -204,21 +235,26 @@ def runner(args: argparse.Namespace) -> None:
     markers = pd.read_csv(args.markers, sep="\t")
     exp = pd.read_csv(args.experiment, sep="\t")
 
-    data = pd.merge(exp, markers, on=args.name_column, how="inner")
-    if args.groups is not None:
+    if args.model == ModelOptimiser.tf:
+        strategy = check_tf_session(args.cpu)
+    else:
+        strategy = DummyContext()
+
+    data = pd.merge(exp, markers, on=args.name_col, how="inner")
+    if args.group_cols is not None:
         groups: "Optional[np.ndarray]" = (
             data
-            .loc[:, args.groups]
+            .loc[:, args.group_cols]
             .values
             .astype(float)
         )
     else:
         groups = None
 
-    if args.covariates is not None:
+    if args.covariate_cols is not None:
         covariates: "Optional[np.ndarray]" = (
             data
-            .loc[:, args.covariates]
+            .loc[:, args.covariate_cols]
             .values
             .astype(float)
         )
@@ -227,12 +263,12 @@ def runner(args: argparse.Namespace) -> None:
 
     markers = (
         data
-        .loc[:, markers.columns.difference(args.name_column)]
+        .loc[:, markers.columns.difference([args.name_col])]
         .values
         .astype(float)
     )
 
-    y = data.loc[:, [args.response]].values.astype(float)
+    y = data.loc[:, [args.response_col]].values.astype(float)
 
     if args.seed is not None:
         np.random.set_state(args.seed)
@@ -265,29 +301,33 @@ def runner(args: argparse.Namespace) -> None:
         study.add_trials(existing_trials)
     else:
         # Expect that these have already been run.
-        for trial in model.starting_points():
-            study.enqueue_trial(trial)
+        # for trial in model.starting_points():
+        #    study.enqueue_trial(trial)
+        pass
 
     try:
         # Timeout after 6 hours
-        study.optimize(
-            optimiser,
-            timeout=round(args.timeout) * 60 * 60,
-            n_trials=args.ntrials,
-            n_jobs=args.cpu,
-            gc_after_trial=True,
-            catch=(MemoryError, OSError, ValueError, KeyError)
-        )
+        with strategy.scope():
+            study.optimize(
+                optimiser,
+                timeout=round(args.timeout) * 60 * 60,
+                n_trials=args.ntrials,
+                n_jobs=args.ntasks,
+                gc_after_trial=True,
+                catch=(MemoryError, OSError, ValueError, KeyError)
+            )
     finally:
         if args.pickle is not None:
             import pickle
             pickle.dump(study.trials, args.pickle)
 
         trial_df = study.trials_dataframe()
-        trial_df.to_csv(args.outfile, sep="\t")
+        trial_df.to_csv(args.outfile, sep="\t", index=False)
 
         if args.best is not None:
             best = study.best_params
+            best["model"] = str(args.model)
+            best["task"] = str(args.task)
             json.dump(best, args.best)
 
         if args.importance is not None:
