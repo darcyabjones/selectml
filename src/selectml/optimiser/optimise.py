@@ -39,6 +39,9 @@ def ndistinct(x, keep_all: bool = False):
     """ Roughly finds out how many features I expect a one hot encoded
     copy of the matrix to have.
     """
+    if len(x.shape) == 0:
+        return 0
+
     if keep_all:
         return np.apply_along_axis(
             lambda y: max([np.unique(y).shape[0] - 1, 1]),
@@ -422,6 +425,15 @@ class OptimiseTarget(OptimiseBase):
             ("transformer", g),
         ], name=f"{self.name}_target_transformer")
 
+    def starting_points(
+        self
+    ) -> "List[Params]":
+        params: "List[Params]" = []
+        if "stdnorm" in self.options:
+            params.append({f"{self.name}_transformer": "stdnorm"})
+
+        return params
+
 
 class OptimiseCovariates(OptimiseBase):
 
@@ -558,6 +570,13 @@ class OptimiseCovariates(OptimiseBase):
                 )
 
         return g
+
+    def starting_points(
+        self
+    ) -> "List[Params]":
+        params: "List[Params]" = []
+        params.append({f"{self.name}_transformer": "passthrough"})
+        return params
 
 
 class OptimiseFeatureSelector(OptimiseBase):
@@ -943,6 +962,13 @@ class OptimiseFeatureSelector(OptimiseBase):
         else:
             return model.transform(Xs_)
 
+    def starting_points(
+        self
+    ) -> "List[Params]":
+        params: "List[Params]" = []
+        params.append({f"{self.name}_selector": "passthrough"})
+        return params
+
 
 class OptimisePostFeatureSelector(OptimiseBase):
 
@@ -1070,6 +1096,13 @@ class OptimisePostFeatureSelector(OptimiseBase):
 
         return s
 
+    def starting_points(
+        self
+    ) -> "List[Params]":
+        params: "List[Params]" = []
+        params.append({f"{self.name}_selector": "passthrough"})
+        return params
+
 
 class OptimiseMarkerTransformer(OptimiseBase):
 
@@ -1192,6 +1225,13 @@ class OptimiseMarkerTransformer(OptimiseBase):
 
         return g
 
+    def starting_points(
+        self
+    ) -> "List[Params]":
+        params: "List[Params]" = []
+        params.append({f"{self.name}_selector": "passthrough"})
+        return params
+
 
 class OptimiseDistTransformer(OptimiseBase):
 
@@ -1284,6 +1324,18 @@ class OptimiseDistTransformer(OptimiseBase):
             return Pipeline(steps, name=f"{self.name}_preprocessor")
         else:
             return p
+
+    def starting_points(
+        self
+    ) -> "List[Params]":
+        params: "List[Params]" = []
+
+        if "drop" in self.options:
+            params.append({f"{self.name}_transformer": "drop"})
+
+        if "vanraden" in self.options:
+            params.append({f"{self.name}_transformer": "vanraden"})
+        return params
 
 
 class OptimiseAddEpistasis(OptimiseBase):
@@ -1613,6 +1665,22 @@ class OptimiseNonLinear(OptimiseBase):
             name=f"{self.name}_preprocessor",
         )
 
+    def starting_points(
+        self
+    ) -> "List[Params]":
+        params: "List[Params]" = []
+
+        if "drop" in self.options:
+            params.append({f"{self.name}_transformer": "drop"})
+
+        if "poly" in self.options:
+            params.append({
+                f"{self.name}_transformer": "poly",
+                f"{self.name}_ncomponents": 1,
+                f"{self.name}_nquantiles": 100
+            })
+        return params
+
 
 class OptimiseGrouping(OptimiseBase):
 
@@ -1848,6 +1916,23 @@ class OptimiseInteractions(OptimiseBase):
             ],
             name=f"{self.name}_preprocessor",
         )
+
+    def starting_points(
+        self
+    ) -> "List[Params]":
+        params: "List[Params]" = []
+
+        if "drop" in self.options:
+            params.append({f"{self.name}_preprocessor": "drop"})
+
+        if "poly" in self.options:
+            params.append({
+                f"{self.name}_preprocessor": "poly",
+                f"{self.name}_poly_gamma": 1.0,
+                f"{self.name}_ncomponents": 1,
+                f"{self.name}_nquantiles": 100
+            })
+        return params
 
 
 class OptimiseSK(OptimiseBase):
@@ -2959,13 +3044,21 @@ class OptimiseSGD(OptimiseSK):
         ):
             d: "Params" = {
                 f"{self.name}_loss": loss,
-                f"{self.name}_penalty": "l2",
+                f"{self.name}_penalty": p,
                 f"{self.name}_alpha": a,
+                f"{self.name}_fit_intercept": True,
                 f"{self.name}_learning_rate": "optimal",
-                f"{self.name}_epsilon": 0,
-                f"{self.name}_C": 1,
+                f"{self.name}_max_iter": 10000,
+                f"{self.name}_use_average": False,
                 f"{self.name}_dual": True,
             }
+
+            if loss in (
+                "huber",
+                "epsilon_insensitive",
+                "squared_epsilon_insensitive"
+            ):
+                d[f"{self.name}_epsilon"] = 0.0
 
             if loss in (
                 "hinge",
@@ -3054,7 +3147,7 @@ class OptimiseLassoLars(OptimiseSK):
             d: "Params" = {
                 f"{self.name}_alpha": a,
                 f"{self.name}_fit_intercept": True,
-                f"{self.name}_max_iter": 1000,
+                f"{self.name}_max_iter": 10000,
                 f"{self.name}_jitter": 0,
             }
             out.append(d)
@@ -3117,7 +3210,7 @@ class OptimiseLars(OptimiseSK):
     def starting_points(self) -> "List[Params]":
         out: "List[Params]" = []
 
-        for i in [50, 100, 500, 1000]:
+        for i in [50, 100, 500]:
             d: "Params" = {
                 f"{self.name}_fit_intercept": True,
                 f"{self.name}_n_nonzero_coefs": i,
@@ -4315,7 +4408,7 @@ class OptimiseConvMLP(OptimiseSK):
             conv_use_batchnorm=True,
             adaptive_l1=params.get(f"{self.name}_adaptive", False),
             adaptive_l1_rate=params.get(f"{self.name}_adaptive_l1_rate", 0.0),
-            adaptive_l2_rate=params.get(f"{self.name}_adaptive_l1_rate", 0.0),
+            adaptive_l2_rate=params.get(f"{self.name}_adaptive_l2_rate", 0.0),
             marker_embed_nlayers=params.get(f"{self.name}_marker_embed_nlayers", 1),  # noqa: E501
             marker_embed_residual=params.get(f"{self.name}_marker_embed_residual", False),  # noqa: E501
             marker_embed_nunits=params.get(f"{self.name}_marker_embed_nunits", 2),  # noqa: E501
@@ -4360,7 +4453,62 @@ class OptimiseConvMLP(OptimiseSK):
         return model
 
     def starting_points(self) -> "List[Params]":
+        from itertools import product
+
         out: "List[Params]" = []
+        for loss, lr, nepoch in product(
+            self.loss,
+            [1e-4, 0.1],
+            [50, 100, 500, 1000]
+        ):
+            d = {
+                f"{self.name}_nepochs": nepoch,
+                f"{self.name}_learning_rate": lr,
+                f"{self.name}_conv_nlayers": 0,
+                f"{self.name}_adaptive_l1": True,
+                f"{self.name}_adaptive_l1_rate": 1e-5,
+                f"{self.name}_adaptive_l2_rate": 0.0,
+                f"{self.name}_marker_embed_nlayers": 1,
+                f"{self.name}_marker_embed_residual": False,
+                f"{self.name}_marker_embed_nunits": 5,
+                f"{self.name}_marker_embed_final_nunits": None,
+                f"{self.name}_marker_embed_activation": "linear",
+                f"{self.name}_marker_embed_0_dropout_rate": 0.5,
+                f"{self.name}_marker_embed_1_dropout_rate": 0.5,
+                f"{self.name}_dist_embed_nlayers": 1,
+                f"{self.name}_dist_embed_residual": False,
+                f"{self.name}_dist_embed_nunits": 5,
+                f"{self.name}_dist_embed_final_nunits": None,
+                f"{self.name}_dist_embed_activation": "linear",
+                f"{self.name}_dist_embed_0_dropout_rate": 0.5,
+                f"{self.name}_dist_embed_1_dropout_rate": 0.5,
+                f"{self.name}_group_embed_nlayers": 1,
+                f"{self.name}_group_embed_residual": False,
+                f"{self.name}_group_embed_nunits": 5,
+                f"{self.name}_group_embed_final_nunits": None,
+                f"{self.name}_group_embed_activation": "linear",
+                f"{self.name}_group_embed_0_dropout_rate": 0.5,
+                f"{self.name}_group_embed_1_dropout_rate": 0.5,
+                f"{self.name}_covariate_embed_nlayers": 1,
+                f"{self.name}_covariate_embed_residual": False,
+                f"{self.name}_covariate_embed_nunits": 5,
+                f"{self.name}_covariate_embed_final_nunits": None,
+                f"{self.name}_covariate_embed_activation": "linear",
+                f"{self.name}_covariate_embed_0_dropout_rate": 0.5,
+                f"{self.name}_covariate_embed_1_dropout_rate": 0.5,
+                f"{self.name}_combine_method": "concatenate",
+                f"{self.name}_post_embed_nlayers": 1,
+                f"{self.name}_post_embed_residual": False,
+                f"{self.name}_post_embed_nunits": 5,
+                f"{self.name}_post_embed_final_nunits": None,
+                f"{self.name}_post_embed_activation": "linear",
+                f"{self.name}_post_embed_0_dropout_rate": 0.5,
+                f"{self.name}_post_embed_1_dropout_rate": 0.5,
+                f"{self.name}_predictor_dropout_rate": 0.2,
+                f"{self.name}_hard_triplet_loss_rate": None,
+                f"{self.name}_semihard_triplet_loss_rate": None,
+            }
+            out.append(d)
         return out
 
     def fit(

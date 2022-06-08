@@ -1,0 +1,24 @@
+name: selectml
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - r-base[version='>=4']
+  - pip
+  - jupyterlab
+  - baikal
+  - r-bglr
+  - gemma
+  - scipy
+  - numpy
+  - xgboost
+  - optuna
+  - tensorflow
+  - scikit-learn
+  - fastcluster
+  - rpy2
+  - pip
+    - tensorflow_addons
+    - ngboost

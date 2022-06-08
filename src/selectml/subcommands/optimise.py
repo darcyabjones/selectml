@@ -67,7 +67,7 @@ def cli(parser: argparse.ArgumentParser) -> None:
         "-g", "--group-cols",
         type=str,
         nargs="+",
-        default=[],
+        default=None,
         help=(
             "The column(s) in the experiment table to use for grouping "
             "factors (e.g. different environments) that should be included."
@@ -78,7 +78,7 @@ def cli(parser: argparse.ArgumentParser) -> None:
         "-c", "--covariate-cols",
         type=str,
         nargs="+",
-        default=[],
+        default=None,
         help=(
             "The column(s) in experiment to use as covariates."
         )
@@ -177,8 +177,9 @@ def setup_optimise(
     else:
         tracker_ = list(tracker)
 
-    train_data = [tr for tr, _ in cv()]
-    test_data = [te for _, te in cv()]
+    data = [(tr, te) for tr, te in cv()]
+    train_data = [tr for tr, _ in data]
+    test_data = [te for _, te in data]
 
     def inner(trial):
         params, models, _, _ = model.sample(trial, train_data)
@@ -241,6 +242,10 @@ def runner(args: argparse.Namespace) -> None:
         strategy = DummyContext()
 
     data = pd.merge(exp, markers, on=args.name_col, how="inner")
+
+    if isinstance(args.group_cols, list) and len(args.group_cols) == 0:
+        args.group_cols = None
+
     if args.group_cols is not None:
         groups: "Optional[np.ndarray]" = (
             data
@@ -251,7 +256,10 @@ def runner(args: argparse.Namespace) -> None:
     else:
         groups = None
 
-    if args.covariate_cols is not None:
+    if isinstance(args.covariate_cols, list) and len(args.covariate_cols) == 0:
+        args.covariate_cols = None
+
+    if (args.covariate_cols is not None):
         covariates: "Optional[np.ndarray]" = (
             data
             .loc[:, args.covariate_cols]
