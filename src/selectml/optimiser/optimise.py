@@ -489,7 +489,7 @@ class OptimiseCovariates(OptimiseBase):
                 )
             )
 
-        if (target == "drop") and self.use_polynomial:
+        if (target != "drop") and self.use_polynomial:
             p = trial.suggest_categorical(  # noqa
                 f"{self.name}_polynomial_degree",
                 [1, 2, 3]
@@ -2170,7 +2170,7 @@ class OptimiseKNN(OptimiseSK):
             f"{self.name}_n_neighbors": trial.suggest_int(
                 f"{self.name}_n_neighbors",
                 2,
-                max([0, min([100, nsamples - 1])]),
+                max([2, min([100, nsamples - 1])]),
             ),
             f"{self.name}_weights": trial.suggest_categorical(
                 f"{self.name}_weights",
@@ -2831,7 +2831,6 @@ class OptimiseSVM(OptimiseSK):
                 f"{self.name}_loss": loss,
                 f"{self.name}_epsilon": 0,
                 f"{self.name}_C": 1,
-                f"{self.name}_dual": True,
                 f"{self.name}_intercept_scaling": 0.1,
                 f"{self.name}_fit_intercept": True,
             }
@@ -4234,7 +4233,7 @@ class OptimiseConvMLP(OptimiseSK):
         min_embed_nunits = 5
         max_embed_nunits = 100
         min_embed_nlayers = 1
-        max_embed_nlayers = 10
+        max_embed_nlayers = 5
 
         if combine_method == "add":
             final_nunits = trial.suggest_int(
