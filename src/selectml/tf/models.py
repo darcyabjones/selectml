@@ -601,7 +601,6 @@ class ConvMLP(tf.keras.models.Model):
 
         return layers
 
-    @tf.function
     def get_marker_embed_output(self, X, training=False):
         if X is not None:
             for i, layer in enumerate(self.marker_layers):
@@ -609,7 +608,6 @@ class ConvMLP(tf.keras.models.Model):
 
         return X
 
-    @tf.function
     def get_dist_embed_output(self, X, training=False):
         if X is not None:
             for i, layer in enumerate(self.dist_layers):
@@ -617,7 +615,6 @@ class ConvMLP(tf.keras.models.Model):
 
         return X
 
-    @tf.function
     def get_group_embed_output(self, X, training=False):
         if X is not None:
             for i, layer in enumerate(self.group_layers):
@@ -625,7 +622,6 @@ class ConvMLP(tf.keras.models.Model):
 
         return X
 
-    @tf.function
     def get_covariate_embed_output(self, X, training=False):
         if X is not None:
             for i, layer in enumerate(self.covariate_layers):
@@ -660,7 +656,6 @@ class ConvMLP(tf.keras.models.Model):
         combined = self.combiner(to_combine)
         return combined
 
-    @tf.function
     def get_post_embed_output(self, X, training=False):
         # X should not be None
         for layer in self.post_layers:
@@ -668,14 +663,12 @@ class ConvMLP(tf.keras.models.Model):
 
         return X
 
-    @tf.function
     def get_predictor_output(self, X, training=False):
         for layer in self.predictor_layers:
             X = layer(X, training=training)
 
         return X
 
-    @tf.function
     def long_call(self, inputs, training=False):  # noqa: C901
         from selectml.higher import fmap
 
@@ -1323,19 +1316,16 @@ class SSModel(tf.keras.Model):
             metrics["rank_loss"] = self.rank_loss_tracker.result()
         return metrics
 
-    @tf.function
     def get_marker_embed_output(self, X, training=False):
         X = self.marker_embedder(X, training=training)
         X = tf.math.l2_normalize(X, axis=1)  # L2 normalize embeddings
         return X
 
-    @tf.function
     def get_env_embed_output(self, X, training=False):
         X = self.env_embedder(X, training=training)
         X = tf.math.l2_normalize(X, axis=1)  # L2 normalize embeddings
         return X
 
-    @tf.function
     def get_embed_output(self, X, training=False):
         if self.env_embedder is None:
             Xmarkers = X
@@ -1367,7 +1357,6 @@ class SSModel(tf.keras.Model):
         assert out is not None
         return out
 
-    @tf.function
     def long_call(self, X, training=False):
         if self.env_embedder is None:
             Xmarkers = X

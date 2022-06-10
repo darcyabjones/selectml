@@ -15,10 +15,8 @@ dependencies:
   - numpy
   - xgboost
   - optuna
-  - tensorflow
   - scikit-learn
   - fastcluster
   - rpy2
-  - pip
-    - tensorflow_addons
+  - pip:
     - ngboost

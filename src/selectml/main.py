@@ -98,6 +98,7 @@ def main():  # noqa
         print(e.message, file=sys.stderr)
         sys.exit(e.errno)
 
+    print(args)
     try:
         if args.subparser_name == "optimise":
             optimise_runner(args)

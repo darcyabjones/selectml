@@ -4399,7 +4399,7 @@ class OptimiseConvMLP(OptimiseSK):
             loss=loss,
             optimizer__learning_rate=params.get(f"{self.name}_learning_rate", 0.001),  # noqa: E501
             epochs=params.get(f"{self.name}_nepochs", 100),
-            verbose=0,
+            verbose=1,
             conv_nlayers=params.get(f"{self.name}_conv_nlayers", 0),
             conv_filters=params.get(f"{self.name}_conv_filters", 1),
             conv_strides=params.get(f"{self.name}_conv_strides", 1),

@@ -237,7 +237,8 @@ def runner(args: argparse.Namespace) -> None:
     exp = pd.read_csv(args.experiment, sep="\t")
 
     if args.model == ModelOptimiser.tf:
-        strategy = check_tf_session(args.cpu)
+        #strategy = check_tf_session(args.cpu)
+        strategy = DummyContext()
     else:
         strategy = DummyContext()
 
@@ -309,9 +310,8 @@ def runner(args: argparse.Namespace) -> None:
         study.add_trials(existing_trials)
     else:
         # Expect that these have already been run.
-        # for trial in model.starting_points():
-        #    study.enqueue_trial(trial)
-        pass
+        for trial in model.starting_points():
+           study.enqueue_trial(trial)
 
     try:
         # Timeout after 6 hours
