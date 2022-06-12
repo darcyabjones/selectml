@@ -10,6 +10,9 @@ import numpy as np
 import pandas as pd
 import optuna
 
+from optuna.study import MaxTrialsCallback
+from optuna.trial import TrialState
+
 from ..optimiser.cv import CVData
 from ..optimiser.runners import BaseRunner
 from ..optimiser.stats import OptimiseStats
@@ -235,6 +238,7 @@ def runner(args: argparse.Namespace) -> None:
     task = str(args.task)
     stats = args.task.get_stats()
     markers = pd.read_csv(args.markers, sep="\t")
+
     exp = pd.read_csv(args.experiment, sep="\t")
 
     if args.model == ModelOptimiser.tf:
@@ -302,7 +306,10 @@ def runner(args: argparse.Namespace) -> None:
     else:
         direction = "maximize"
 
-    study = optuna.create_study(direction=direction)
+    study = optuna.create_study(
+        direction=direction,
+        load_if_exists=True,
+    )
 
     if args.continue_ is not None:
         import pickle
@@ -321,7 +328,7 @@ def runner(args: argparse.Namespace) -> None:
             study.optimize(
                 optimiser,
                 timeout=round(args.timeout) * 60 * 60,
-                n_trials=args.ntrials,
+                callbacks=[MaxTrialsCallback(args.ntrials, states=(TrialState.COMPLETE,))],
                 n_jobs=args.ntasks,
                 gc_after_trial=True,
                 catch=(MemoryError, OSError, ValueError, KeyError)
