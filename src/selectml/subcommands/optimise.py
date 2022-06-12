@@ -183,6 +183,7 @@ def setup_optimise(
 
     def inner(trial):
         params, models, _, _ = model.sample(trial, train_data)
+        print("PARAMS", params)
 
         results = []
         for m, test in zip(models, test_data):
@@ -322,7 +323,7 @@ def runner(args: argparse.Namespace) -> None:
                 n_trials=args.ntrials,
                 n_jobs=args.ntasks,
                 gc_after_trial=True,
-                catch=(MemoryError, OSError, ValueError, KeyError)
+                # catch=(MemoryError, OSError, ValueError, KeyError)
             )
     finally:
         if args.pickle is not None:

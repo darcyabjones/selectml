@@ -44,12 +44,10 @@ class ModelPath:
     epistasis_addxdom_model: "Optional[Step]" = None
 
     def items(self):
-        from dataclass import fields
-        return {
-            f: getattr(self, f)
-            for f
-            in fields(self.__class__)
-        }
+        from dataclasses import fields
+        for f in fields(self.__class__):
+            yield f.name, getattr(self, f.name)
+        return
 
 
 @dataclass
@@ -71,12 +69,10 @@ class DataPath:
     X_epiaddxdom: "Optional[np.ndarray]" = None
 
     def items(self):
-        from dataclass import fields
-        return {
-            f: getattr(self, f)
-            for f
-            in fields(self.__class__)
-        }
+        from dataclasses import fields
+        for f in fields(self.__class__):
+            yield f.name, getattr(self, f.name)
+        return
 
 
 class BaseRunner(object):
@@ -164,8 +160,8 @@ class BaseRunner(object):
         ],
         dist_options: "List[str]" = [
             "vanraden",
-            "manhattan",
-            "euclidean"
+            "noia_additive",
+            "noia_dominance",
         ],
         dist_post_fs_options: "List[str]" = [
             "passthrough",
@@ -1114,6 +1110,18 @@ class SKRunner(BaseRunner):
             model_paths,
             data_paths
         ) = self._sample_preprocessing(trial, cv)
+
+        for data_path in data_paths:
+            for k, v in data_path.items():
+                if v is None:
+                    continue
+
+                try:
+                    if np.isnan(v).any():
+                        print("#### NANs!!!!", params)
+                        print(k, v)
+                finally:
+                    print("FAILED", k, v)
 
         joined = []
         joined_models = []

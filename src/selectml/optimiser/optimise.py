@@ -1240,8 +1240,6 @@ class OptimiseDistTransformer(OptimiseBase):
         ploidy: int,
         options: "Sequence[str]" = [
             "vanraden",
-            "manhattan",
-            "euclidean",
             "noia_additive",
             "noia_dominance",
         ],
