@@ -316,9 +316,10 @@ def runner(args: argparse.Namespace) -> None:
         existing_trials = pickle.load(args.continue_)
         study.add_trials(existing_trials)
     else:
+        pass
         # Expect that these have already been run.
-        for trial in model.starting_points():
-            study.enqueue_trial(trial)
+        # for trial in model.starting_points():
+        #     study.enqueue_trial(trial)
 
     warnings.filterwarnings("ignore")
 
