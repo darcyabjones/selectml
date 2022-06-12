@@ -22,6 +22,7 @@ from sklearn import ensemble
 from sklearn import svm
 from sklearn import linear_model
 from sklearn import feature_selection as sk_feature_selection
+from sklearn import impute
 import ngboost
 
 from selectml.sk import preprocessor
@@ -112,6 +113,12 @@ class XGBRanker(XGBStep, xgb.XGBRanker):
 
     def __init__(self, *args, name=None, **kwargs):
         super().__init__(*args, name=name, **kwargs)
+
+
+SimpleImputer = make_step(
+    impute.SimpleImputer,
+    class_name="SimpleImputer"
+)
 
 
 KNeighborsRegressor = make_step(

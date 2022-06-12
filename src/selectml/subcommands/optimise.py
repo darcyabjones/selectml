@@ -183,7 +183,6 @@ def setup_optimise(
 
     def inner(trial):
         params, models, _, _ = model.sample(trial, train_data)
-        print("PARAMS", params)
 
         results = []
         for m, test in zip(models, test_data):
@@ -238,8 +237,7 @@ def runner(args: argparse.Namespace) -> None:
     exp = pd.read_csv(args.experiment, sep="\t")
 
     if args.model == ModelOptimiser.tf:
-        #strategy = check_tf_session(args.cpu)
-        strategy = DummyContext()
+        strategy = check_tf_session(args.cpu)
     else:
         strategy = DummyContext()
 
@@ -312,7 +310,7 @@ def runner(args: argparse.Namespace) -> None:
     else:
         # Expect that these have already been run.
         for trial in model.starting_points():
-           study.enqueue_trial(trial)
+            study.enqueue_trial(trial)
 
     try:
         # Timeout after 6 hours
@@ -323,7 +321,7 @@ def runner(args: argparse.Namespace) -> None:
                 n_trials=args.ntrials,
                 n_jobs=args.ntasks,
                 gc_after_trial=True,
-                # catch=(MemoryError, OSError, ValueError, KeyError)
+                catch=(MemoryError, OSError, ValueError, KeyError)
             )
     finally:
         if args.pickle is not None:

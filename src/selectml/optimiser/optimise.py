@@ -1615,6 +1615,7 @@ class OptimiseNonLinear(OptimiseBase):
             Nystroem,
             QuantileTransformer,
             MAFScaler,
+            SimpleImputer,
         )
 
         preprocessor = params.get(f"{self.name}_transformer", "drop")
@@ -1658,7 +1659,8 @@ class OptimiseNonLinear(OptimiseBase):
                 ("nonlinear", p),
                 ("scaler", QuantileTransformer(
                     n_quantiles=params[f"{self.name}_nquantiles"]
-                ))
+                )),
+                ("imputer", SimpleImputer()),
             ],
             name=f"{self.name}_preprocessor",
         )
@@ -1870,6 +1872,7 @@ class OptimiseInteractions(OptimiseBase):
             Nystroem,
             QuantileTransformer,
             Pipeline,
+            SimpleImputer,
         )
 
         preprocessor = params.get(f"{self.name}_preprocessor", "drop")
@@ -1910,7 +1913,8 @@ class OptimiseInteractions(OptimiseBase):
                 ("nonlinear", p),
                 ("scaler", QuantileTransformer(
                     n_quantiles=params[f"{self.name}_nquantiles"]
-                ))
+                )),
+                ("imputer", SimpleImputer()),
             ],
             name=f"{self.name}_preprocessor",
         )

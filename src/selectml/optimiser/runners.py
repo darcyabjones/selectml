@@ -326,6 +326,9 @@ class BaseRunner(object):
         if (transformer is not None) and not any(d is None for d in data):
             trans_params = transformer.sample(trial, data)
             params.update(trans_params)
+            any_none = any([np.isnan(np.asarray(d)).any() for d in data])
+            if any_none:
+                raise ValueError("NNOONNEE", transformer, "\nNONE", params, "\nNOONE", data, "\nNOONE", data2)
 
             if data2 is not None:
                 models: "List[Optional[Model]]" = list(map(
@@ -1112,16 +1115,27 @@ class SKRunner(BaseRunner):
         ) = self._sample_preprocessing(trial, cv)
 
         for data_path in data_paths:
+            any_none = False
             for k, v in data_path.items():
                 if v is None:
                     continue
 
-                try:
+                if isinstance(v, np.ndarray):
                     if np.isnan(v).any():
                         print("#### NANs!!!!", params)
-                        print(k, v)
-                finally:
-                    print("FAILED", k, v)
+                        print("FAILED", k, v)
+                        any_none = True
+                if isinstance(v, Dataset):
+                    for m in ["markers", "y", "groups", "covariates"]:
+                        vi = getattr(v, m)
+                        if vi is None:
+                            continue
+                        if np.isnan(vi).any():
+                            print("#### NANs!!!!", params)
+                            print("FAILED", k, m, vi)
+                            any_none = True
+            if any_none:
+                raise ValueError("Nans")
 
         joined = []
         joined_models = []

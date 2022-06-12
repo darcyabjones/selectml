@@ -1075,9 +1075,10 @@ class NOIADominanceScaler(TransformerMixin, BaseEstimator):
         if X_.shape[1] != self.n_features_in_:
             raise ValueError("Must have same number of features")
 
-        p_aa = self.aa_counts_ / self.n_samples_seen_
-        p_Aa = self.Aa_counts_ / self.n_samples_seen_
-        p_AA = self.AA_counts_ / self.n_samples_seen_
+        # The + 1 is to avoid zero division errors later
+        p_aa = (self.aa_counts_ + 1) / (self.n_samples_seen_ + 1)
+        p_Aa = (self.Aa_counts_ + 1) / (self.n_samples_seen_ + 1)
+        p_AA = (self.AA_counts_ + 1) / (self.n_samples_seen_ + 1)
 
         dom_vals = -1 * (2 * p_Aa * p_aa) / (p_AA + p_aa - (p_AA - p_aa) ** 2)
         het_vals = (4 * p_AA * p_aa) / (p_AA + p_aa - (p_AA - p_aa) ** 2)
