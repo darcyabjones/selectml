@@ -326,9 +326,6 @@ class BaseRunner(object):
         if (transformer is not None) and not any(d is None for d in data):
             trans_params = transformer.sample(trial, data)
             params.update(trans_params)
-            any_none = any([np.isnan(np.asarray(d)).any() for d in data])
-            if any_none:
-                raise ValueError("NNOONNEE", transformer, "\nNONE", params, "\nNOONE", data, "\nNOONE", data2)
 
             if data2 is not None:
                 models: "List[Optional[Model]]" = list(map(
@@ -1355,6 +1352,7 @@ class TFRunner(SKRunner):
             target_options=target,
             group_allow_pca=False,
             marker_fs_options=["passthrough", "maf", "relief", "gemma"],
+            marker_options=["passthrough", "maf", "onehot"],
             nonlinear_fs_options=["drop"],
             interactions_options=["drop"],
             dist_post_fs_options=post_fs_options,
@@ -1697,7 +1695,6 @@ class BGLRSKRunner(SKRunner):
             target_options=target,
             marker_fs_options=["passthrough", "maf", "relief", "gemma"],
             dist_post_fs_options=post_fs_options,
-            nonlinear_fs_options=["drop"],  # TODO REMOVE
             nonlinear_post_fs_options=post_fs_options,
             interactions_post_fs_options=post_fs_options,
         )
