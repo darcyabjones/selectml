@@ -177,7 +177,6 @@ def setup_optimise(
     tracker: "Optional[TRACKER_TYPE]" = None
 ) -> "Tuple[Callable[[optuna.Trial], float], TRACKER_TYPE]":
     import json
-    from ..optimise.stats import RankingStats
 
     if tracker is None:
         tracker_: TRACKER_TYPE = []
@@ -194,7 +193,11 @@ def setup_optimise(
         results = []
         for m, test in zip(models, test_data):
             yhat = model.predict(m, test)
-            results.append(stats(test.y, yhat))
+            if np.isnan(yhat).all():
+                raise ValueError(f"All predicted values were NaN. {params}")
+
+            stat = stats(test.y, yhat)
+            results.append(stat)
 
         eval_metric = np.nanmean(np.array([
             r.get(stats.target_metric, np.nan)
@@ -203,10 +206,7 @@ def setup_optimise(
         ]))
 
         if np.isnan(eval_metric):
-            if isinstance(stats, RankingStats):
-                eval_metric = -np.inf
-            else:
-                eval_metric = np.inf
+            raise ValueError(f"Evaluation metric was NaN. {params}")
 
         for result in results:
             result["params"] = json.dumps(params)
@@ -310,7 +310,7 @@ def runner(args: argparse.Namespace) -> None:
         stats=stats,
     )
 
-    if task == "regression":
+    if task in ("regression", "classification"):
         direction = "minimize"
     else:
         direction = "maximize"
@@ -325,10 +325,9 @@ def runner(args: argparse.Namespace) -> None:
         existing_trials = pickle.load(args.continue_)
         study.add_trials(existing_trials)
     else:
-        pass
         # Expect that these have already been run.
-        # for trial in model.starting_points():
-        #     study.enqueue_trial(trial)
+        for trial in model.starting_points():
+            study.enqueue_trial(trial)
 
     warnings.filterwarnings("ignore")
 
@@ -344,7 +343,7 @@ def runner(args: argparse.Namespace) -> None:
                 )],
                 n_jobs=args.ntasks,
                 gc_after_trial=True,
-                catch=(MemoryError, OSError, ValueError,
+                catch=(Exception, MemoryError, OSError, ValueError,
                        KeyError, np.linalg.LinAlgError, RRuntimeError)
             )
     finally:

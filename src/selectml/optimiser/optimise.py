@@ -323,7 +323,8 @@ class OptimiseBase(object):
         return model, preds
 
     def starting_points(
-        self
+        self,
+        **kwargs,
     ) -> "List[Params]":
         return []
 
@@ -572,7 +573,8 @@ class OptimiseCovariates(OptimiseBase):
         return g
 
     def starting_points(
-        self
+        self,
+        **kwargs,
     ) -> "List[Params]":
         params: "List[Params]" = []
         params.append({f"{self.name}_transformer": "passthrough"})
@@ -963,10 +965,17 @@ class OptimiseFeatureSelector(OptimiseBase):
             return model.transform(Xs_)
 
     def starting_points(
-        self
+        self,
+        **kwargs,
     ) -> "List[Params]":
         params: "List[Params]" = []
-        params.append({f"{self.name}_selector": "passthrough"})
+        if "drop" in self.options:
+            params.append({f"{self.name}_selector": "drop"})
+        elif "passthrough" in self.options:
+            params.append({f"{self.name}_selector": "passthrough"})
+        else:
+            params.append({f"{self.name}_selector": self.options[0]})
+
         return params
 
 
@@ -1097,7 +1106,8 @@ class OptimisePostFeatureSelector(OptimiseBase):
         return s
 
     def starting_points(
-        self
+        self,
+        **kwargs,
     ) -> "List[Params]":
         params: "List[Params]" = []
         params.append({f"{self.name}_selector": "passthrough"})
@@ -1226,10 +1236,11 @@ class OptimiseMarkerTransformer(OptimiseBase):
         return g
 
     def starting_points(
-        self
+        self,
+        **kwargs,
     ) -> "List[Params]":
         params: "List[Params]" = []
-        params.append({f"{self.name}_selector": "passthrough"})
+        params.append({f"{self.name}_transformer": "maf"})
         return params
 
 
@@ -1324,15 +1335,17 @@ class OptimiseDistTransformer(OptimiseBase):
             return p
 
     def starting_points(
-        self
+        self,
+        **kwargs,
     ) -> "List[Params]":
         params: "List[Params]" = []
 
         if "drop" in self.options:
             params.append({f"{self.name}_transformer": "drop"})
-
-        if "vanraden" in self.options:
+        elif "vanraden" in self.options:
             params.append({f"{self.name}_transformer": "vanraden"})
+        elif "noia_additive" in self.options:
+            params.append({f"{self.name}_transformer": "noia_additive"})
         return params
 
 
@@ -2106,7 +2119,7 @@ class OptimiseXGB(OptimiseSK):
 
         return model
 
-    def starting_points(self) -> "List[Params]":
+    def starting_points(self, **kwargs) -> "List[Params]":
         out: "List[Params]" = []
         for objective in self.objectives:
             out.extend([
@@ -2125,21 +2138,6 @@ class OptimiseXGB(OptimiseSK):
                     f"{self.name}_max_depth": 4,
                     f"{self.name}_learning_rate": 1e-3,
                 },
-                {
-                    f"{self.name}_objective": objective,
-                    f"{self.name}_n_estimators": 500,
-                    f"{self.name}_booster": "gbtree",
-                    f"{self.name}_gamma": 10,
-                    f"{self.name}_min_child_weight": 1,
-                    f"{self.name}_subsample": 1,
-                    f"{self.name}_colsample_bytree": 1,
-                    f"{self.name}_colsample_bylevel": 1,
-                    f"{self.name}_colsample_bynode": 1,
-                    f"{self.name}_reg_alpha": 1,
-                    f"{self.name}_reg_lambda": 1,
-                    f"{self.name}_max_depth": 9,
-                    f"{self.name}_learning_rate": 1e-3,
-                }
             ])
         return out
 
@@ -2219,20 +2217,13 @@ class OptimiseKNN(OptimiseSK):
         )
         return model
 
-    def starting_points(self) -> "List[Params]":
+    def starting_points(self, **kwargs) -> "List[Params]":
         out: "List[Params]" = []
         out.extend([
             {
                 f"{self.name}_n_neighbors": 10,
                 f"{self.name}_weights": "distance",
                 f"{self.name}_leaf_size": 10,
-                f"{self.name}_algorithm": "kd_tree",
-                f"{self.name}_p": 2,
-            },
-            {
-                f"{self.name}_n_neighbors": 10,
-                f"{self.name}_weights": "distance",
-                f"{self.name}_leaf_size": 50,
                 f"{self.name}_algorithm": "kd_tree",
                 f"{self.name}_p": 2,
             },
@@ -2369,7 +2360,7 @@ class OptimiseRF(OptimiseSK):
         )
         return model
 
-    def starting_points(self) -> "List[Params]":
+    def starting_points(self, **kwargs) -> "List[Params]":
         out: "List[Params]" = []
         for c in self.criterion:
             out.append({
@@ -2512,7 +2503,7 @@ class OptimiseExtraTrees(OptimiseSK):
         )
         return model
 
-    def starting_points(self) -> "List[Params]":
+    def starting_points(self, **kwargs) -> "List[Params]":
         out: "List[Params]" = []
         for c in self.criterion:
             out.append({
@@ -2667,7 +2658,7 @@ class OptimiseNGB(OptimiseSK):
         )
         return model
 
-    def starting_points(self) -> "List[Params]":
+    def starting_points(self, **kwargs) -> "List[Params]":
         out: "List[Params]" = []
         for d in self.distribution:
             out.append({
@@ -2826,7 +2817,7 @@ class OptimiseSVM(OptimiseSK):
             raise ValueError("This shouldn't be reachable")
         return model
 
-    def starting_points(self) -> "List[Params]":
+    def starting_points(self, **kwargs) -> "List[Params]":
         out: "List[Params]" = []
         for loss in self.loss:
             d: "Params" = {
@@ -2903,10 +2894,11 @@ class OptimiseSGD(OptimiseSK):
             ),
         })
 
-        max_iter: int = cast(int, trial.suggest_categorical(
+        max_iter: int = trial.suggest_int(
             f"{self.name}_max_iter",
-            [max([1000, 2 * nsamples])],
-        ))
+            max([1000, 2 * nsamples]),
+            max([1000, 2 * nsamples]),
+        )
         params[f"{self.name}_max_iter"] = max_iter
 
         use_average = trial.suggest_categorical(
@@ -3033,7 +3025,7 @@ class OptimiseSGD(OptimiseSK):
             raise ValueError("This shouldn't be reachable")
         return model
 
-    def starting_points(self) -> "List[Params]":
+    def starting_points(self, **kwargs) -> "List[Params]":
         from itertools import product
         from copy import copy
         out: "List[Params]" = []
@@ -3141,10 +3133,10 @@ class OptimiseLassoLars(OptimiseSK):
         )
         return model
 
-    def starting_points(self) -> "List[Params]":
+    def starting_points(self, **kwargs) -> "List[Params]":
         out: "List[Params]" = []
 
-        for a in [10, 1, 1e-3, 1e-6]:
+        for a in [1, 1e-3, 1e-6]:
             d: "Params" = {
                 f"{self.name}_alpha": a,
                 f"{self.name}_fit_intercept": True,
@@ -3208,7 +3200,7 @@ class OptimiseLars(OptimiseSK):
         )
         return model
 
-    def starting_points(self) -> "List[Params]":
+    def starting_points(self, **kwargs) -> "List[Params]":
         out: "List[Params]" = []
 
         for i in [50, 100, 500]:
@@ -3538,8 +3530,8 @@ class OptimiseBGLR(OptimiseSK):
         model = BGLRRegressor(
             models=bglr_models,
             component_names=bglr_names,
-            niter=10000,
-            burnin=1000,
+            niter=5000,
+            burnin=500,
             response_type=cast(
                 "Literal['gaussian', 'ordinal']",
                 response_type
@@ -3550,8 +3542,21 @@ class OptimiseBGLR(OptimiseSK):
         )
         return model
 
-    def starting_points(self) -> "List[Params]":
-        out: "List[Params]" = []
+    def starting_points(self, **kwargs) -> "List[Params]":
+        out: "List[Params]" = [
+            {
+                f"{self.name}_response_type": self.objective,
+                f"{self.name}_r2": 0.5,
+                f"{self.name}_markers": "BRR",
+                f"{self.name}_add": "RKHS",
+                f"{self.name}_dom": "RKHS",
+                f"{self.name}_epiadd": "RKHS",
+                f"{self.name}_epidom": "RKHS",
+                f"{self.name}_epiaddxdom": "RKHS",
+                f"{self.name}_groups": "BRR",
+                f"{self.name}_covariates": "FIXED",
+            }
+        ]
         return out
 
     def fit(
@@ -3845,8 +3850,8 @@ class OptimiseSKBGLR(OptimiseSK):
         model = BGLRRegressor(
             models=bglr_models,
             component_names=bglr_names,
-            niter=10000,
-            burnin=1000,
+            niter=5000,
+            burnin=500,
             response_type=cast(
                 "Literal['gaussian', 'ordinal']",
                 response_type
@@ -3857,8 +3862,19 @@ class OptimiseSKBGLR(OptimiseSK):
         )
         return model
 
-    def starting_points(self) -> "List[Params]":
-        out: "List[Params]" = []
+    def starting_points(self, **kwargs) -> "List[Params]":
+        out: "List[Params]" = [
+            {
+                f"{self.name}_response_type": self.objective,
+                f"{self.name}_r2": 0.5,
+                f"{self.name}_markers": "BRR",
+                f"{self.name}_dists": "BRR",
+                f"{self.name}_nonlinear": "BRR",
+                f"{self.name}_groups": "BRR",
+                f"{self.name}_covariates": "FIXED",
+                f"{self.name}_interactions": "BRR",
+            }
+        ]
         return out
 
     def fit(
@@ -4453,14 +4469,14 @@ class OptimiseConvMLP(OptimiseSK):
         )
         return model
 
-    def starting_points(self) -> "List[Params]":
+    def starting_points(self, **kwargs) -> "List[Params]":
         from itertools import product
 
         out: "List[Params]" = []
         for loss, lr, nepoch in product(
             self.loss,
             [1e-4, 0.1],
-            [50, 100, 500, 1000]
+            [50, 100, 500]
         ):
             d = {
                 f"{self.name}_nepochs": nepoch,

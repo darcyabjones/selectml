@@ -117,7 +117,10 @@ class BaseRunner(object):
                     sp1.update(copy.copy(sp2))
                     new_starting_points.append(sp1)
 
-            starting_points = new_starting_points
+            # If one has zero members, we'll get an empty list, so
+            # only update if not empty
+            if len(new_starting_points) > 0:
+                starting_points = new_starting_points
 
         return starting_points
 

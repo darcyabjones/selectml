@@ -61,6 +61,19 @@ class OptimiseStats(object):
         return x
 
 
+def clip(x: np.ndarray) -> np.ndarray:
+    try:
+        info: "Union[np.finfo, np.iinfo]" = np.finfo(x.dtype)
+    except ValueError as e:
+        try:
+            info = np.iinfo(x.dtype)
+        except Exception:
+            raise e
+
+    x = np.clip(x, info.min, info.max)
+    return x
+
+
 def exclude_nans(
     fn: "Callable[[np.ndarray, np.ndarray], float]",
     true: "np.ndarray",
@@ -100,8 +113,8 @@ class RegressionStats(OptimiseStats):
             tau_correlation,
         )
 
-        y_ = np.asarray(y)
-        preds_ = np.asarray(preds)
+        y_ = clip(np.asarray(y))
+        preds_ = clip(np.asarray(preds))
 
         results = {
             "mae": mean_absolute_error(y_, preds_),
@@ -145,8 +158,8 @@ class RankingStats(OptimiseStats):
         )
         from sklearn.metrics import ndcg_score
 
-        y_ = np.asarray(y)
-        preds_ = np.asarray(preds)
+        y_ = clip(np.asarray(y))
+        preds_ = clip(np.asarray(preds))
 
         results: "StatsOutType" = {
             "pearsons": pearsons_correlation(
@@ -188,8 +201,8 @@ class ClassificationStats(OptimiseStats):
             precision_score,
         )
 
-        y_ = np.asarray(y)
-        preds_ = np.asarray(preds)
+        y_ = clip(np.asarray(y))
+        preds_ = clip(np.asarray(preds))
 
         results = {
             "recall": recall_score(y_, preds_),
