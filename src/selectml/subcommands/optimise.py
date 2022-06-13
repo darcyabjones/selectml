@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import optuna
 
-import rpy2
+from rpy2.rinterface_lib.embedded import RRuntimeError
 
 from optuna.study import MaxTrialsCallback
 from optuna.trial import TrialState
@@ -334,7 +334,7 @@ def runner(args: argparse.Namespace) -> None:
                 callbacks=[MaxTrialsCallback(args.ntrials, states=(TrialState.COMPLETE,))],
                 n_jobs=args.ntasks,
                 gc_after_trial=True,
-                catch=(MemoryError, OSError, ValueError, KeyError, np.linalg.LinAlgError, rpy2.rinterface_lib.embedded.RRuntimeError)
+                catch=(MemoryError, OSError, ValueError, KeyError, np.linalg.LinAlgError, RRuntimeError)
             )
     finally:
         if args.pickle is not None:
