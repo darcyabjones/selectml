@@ -334,7 +334,7 @@ def runner(args: argparse.Namespace) -> None:
                 callbacks=[MaxTrialsCallback(args.ntrials, states=(TrialState.COMPLETE,))],
                 n_jobs=args.ntasks,
                 gc_after_trial=True,
-                catch=(MemoryError, OSError, ValueError, KeyError, np.linalg.LinAlgError, rpy2.rinterface.RRuntimeError)
+                catch=(MemoryError, OSError, ValueError, KeyError, np.linalg.LinAlgError, rpy2.rinterface_lib.embedded.RRuntimeError)
             )
     finally:
         if args.pickle is not None:
