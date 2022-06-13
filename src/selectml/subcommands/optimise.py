@@ -177,6 +177,7 @@ def setup_optimise(
     tracker: "Optional[TRACKER_TYPE]" = None
 ) -> "Tuple[Callable[[optuna.Trial], float], TRACKER_TYPE]":
     import json
+    from ..optimise.stats import RankingStats
 
     if tracker is None:
         tracker_: TRACKER_TYPE = []
@@ -200,6 +201,12 @@ def setup_optimise(
             for r
             in results
         ]))
+
+        if np.isnan(eval_metric):
+            if isinstance(stats, RankingStats):
+                eval_metric = -np.inf
+            else:
+                eval_metric = np.inf
 
         for result in results:
             result["params"] = json.dumps(params)
@@ -331,10 +338,14 @@ def runner(args: argparse.Namespace) -> None:
             study.optimize(
                 optimiser,
                 timeout=round(args.timeout) * 60 * 60,
-                callbacks=[MaxTrialsCallback(args.ntrials, states=(TrialState.COMPLETE,))],
+                callbacks=[MaxTrialsCallback(
+                    args.ntrials,
+                    states=(TrialState.COMPLETE,)
+                )],
                 n_jobs=args.ntasks,
                 gc_after_trial=True,
-                catch=(MemoryError, OSError, ValueError, KeyError, np.linalg.LinAlgError, RRuntimeError)
+                catch=(MemoryError, OSError, ValueError,
+                       KeyError, np.linalg.LinAlgError, RRuntimeError)
             )
     finally:
         if args.pickle is not None:

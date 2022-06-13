@@ -61,6 +61,22 @@ class OptimiseStats(object):
         return x
 
 
+def exclude_nans(
+    fn: "Callable[[np.ndarray, np.ndarray], float]",
+    true: "np.ndarray",
+    preds: "np.ndarray",
+    maximise: bool = False,
+) -> float:
+    if np.isnan(true).any() or np.isnan(preds).any():
+        if maximise:
+            return -np.inf
+        else:
+            return np.inf
+
+    val = fn(true, preds)
+    return val
+
+
 class RegressionStats(OptimiseStats):
 
     target_metric = "mse"
