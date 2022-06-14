@@ -33,7 +33,7 @@ process model {
     """
     tar --dereference --strip-components=1 -zxf "${infile}"
 
-    mkdir "${infile.simpleName}_outdir"
+    mkdir -p "${infile.simpleName}_outdir"
 
     selectml \
       optimise \
@@ -47,6 +47,7 @@ process model {
       --full "${infile.simpleName}_outdir/${task_}_${model}_full_results.tsv" \
       --pickle "${infile.simpleName}_outdir/${task_}_${model}_pickle.pkl" \
       --best "${infile.simpleName}_outdir/${task_}_${model}_best.json" \
+      --importance "${infile.simpleName}_outdir/${task_}_${model}_importance.json" \
       --ntasks 1 \
       --cpu "${task.cpus}" \
       --ntrials ${ntrials} \
@@ -96,10 +97,10 @@ process eval {
         \$2==3 {print \$1, \$2, \$3, \$4, \$5, "random"}
     ' >> ./phenos.tsv
 
-    mkdir "${output_dir}"
+    mkdir -p "${output_dir}"
     cp -L optimised/${task_}_${model}_results.tsv "${output_dir}"
     cp -L optimised/${task_}_${model}_full_results.tsv "${output_dir}"
-    # cp -L optimised/${task_}_${model}_importance.tsv "${output_dir}"
+    cp -L optimised/${task_}_${model}_importance.tsv "${output_dir}"
     cp -L optimised/${task_}_${model}_best.json "${output_dir}"
 
     selectml predict \
@@ -140,7 +141,7 @@ workflow {
 
     // models = Channel.of( "sgd" )
     // models = Channel.of( "sgd", "bglr", "knn", "xgb" )
-    models = Channel.of( "bglr", "knn", "xgb" )
+    models = Channel.of( "sgd" )
 
     combined = infiles.combine(models)
     results = model(combined, params.task, params.ntrials)

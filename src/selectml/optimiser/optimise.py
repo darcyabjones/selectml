@@ -1035,6 +1035,22 @@ class OptimisePostFeatureSelector(OptimiseBase):
 
         return params
 
+    def mic(self, X, y):
+        from sklearn.feature_selection import mutual_info_classif
+        return mutual_info_classif(
+            X,
+            y,
+            random_state=self.rng.getrandbits(32)
+        )
+
+    def mir(self, X, y):
+        from sklearn.feature_selection import mutual_info_regression
+        return mutual_info_regression(
+            X,
+            y,
+            random_state=self.rng.getrandbits(32)
+        )
+
     def model(  # noqa
         self,
         params: "Params",
@@ -1047,8 +1063,6 @@ class OptimisePostFeatureSelector(OptimiseBase):
         from sklearn.feature_selection import (
             f_classif,
             chi2,
-            mutual_info_classif,
-            mutual_info_regression,
             f_regression,
         )
 
@@ -1082,21 +1096,13 @@ class OptimisePostFeatureSelector(OptimiseBase):
             )
         elif selector == "mutual_info_regression":
             s = SelectKBest(
-                score_func=lambda X, y: mutual_info_regression(
-                    X,
-                    y,
-                    random_state=self.rng.getrandbits(32)
-                ),
+                score_func=self.mir,
                 k=n,
                 name=f"{self.name}_selector"
             )
         elif selector == "mutual_info_classif":
             s = SelectKBest(
-                score_func=lambda X, y: mutual_info_classif(
-                    X,
-                    y,
-                    random_state=self.rng.getrandbits(32)
-                ),
+                score_func=self.mic,
                 k=n,
                 name=f"{self.name}_selector"
             )
@@ -2723,7 +2729,7 @@ class OptimiseSVM(OptimiseSK):
             ),
             f"{self.name}_max_iter": trial.suggest_int(
                 f"{self.name}_max_iter",
-                nfeatures * 10,
+                nfeatures * 9,
                 (nfeatures * 10)
             )
         })
@@ -2897,7 +2903,7 @@ class OptimiseSGD(OptimiseSK):
         max_iter: int = trial.suggest_int(
             f"{self.name}_max_iter",
             max([1000, 2 * nsamples]),
-            max([1000, 2 * nsamples]),
+            max([1000, 3 * nsamples]),
         )
         params[f"{self.name}_max_iter"] = max_iter
 

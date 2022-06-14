@@ -67,7 +67,7 @@ def cli(parser: argparse.ArgumentParser) -> None:
         "-g", "--group-cols",
         type=str,
         nargs="+",
-        default=[],
+        default=None,
         help=(
             "The column(s) in the experiment table to use for grouping "
             "factors (e.g. different environments) that should be included."
@@ -78,7 +78,7 @@ def cli(parser: argparse.ArgumentParser) -> None:
         "-c", "--covariate-cols",
         type=str,
         nargs="+",
-        default=[],
+        default=None,
         help=(
             "The column(s) in experiment to use as covariates."
         )
@@ -264,9 +264,17 @@ def runner(args: argparse.Namespace) -> None:
 
     if args.stats is not None:
         stats = args.task.get_stats()
+        gb_cols = [args.train_col]
+
+        if "generation" in selection.columns:
+            gb_cols.append("generation")
+
+        if "population" in selection.population:
+            gb_cols.append("populations")
+
         stat_results = (
             selection
-            .groupby(args.train_col)
+            .groupby(gb_cols)
             [[args.response_col, "predictions"]]
             .apply(lambda x: pd.Series(stats(x.iloc[:, 0], x.iloc[:, 1])))
         )

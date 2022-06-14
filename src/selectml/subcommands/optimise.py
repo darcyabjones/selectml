@@ -209,8 +209,9 @@ def setup_optimise(
             raise ValueError(f"Evaluation metric was NaN. {params}")
 
         for result in results:
-            result["params"] = json.dumps(params)
+            result.update(params)
             tracker_.append(pd.Series(result))
+
         return eval_metric
 
     return inner, tracker_
@@ -354,6 +355,9 @@ def runner(args: argparse.Namespace) -> None:
         trial_df = study.trials_dataframe()
         trial_df.to_csv(args.outfile, sep="\t", index=False)
 
+        if args.full is not None:
+            pd.DataFrame(tracker).to_csv(args.full, sep="\t", index=False)
+
         if args.best is not None:
             best = study.best_params
             best["model"] = str(args.model)
@@ -361,7 +365,12 @@ def runner(args: argparse.Namespace) -> None:
             json.dump(best, args.best)
 
         if args.importance is not None:
-            importance = optuna.importance.get_param_importances(study)
-            json.dump(importance, args.importance)
+            try:
+                importance = optuna.importance.get_param_importances(study)
+                json.dump(importance, args.importance)
+            except Exception:
+                # get importances raises an error in certain circumstances.
+                # Just continue on
+                pass
 
     return

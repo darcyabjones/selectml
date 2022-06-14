@@ -849,7 +849,10 @@ class BaseRunner(object):
             # We checked along the way that if one is none, all are none.
             # So this should be safe.
             zm = [zmi for zmi in zm if zmi is not None]
-            mpi.joined_model = ColumnStack()(zm)
+            if len(zm) == 1:
+                mpi.joined_model = zm[0]
+            else:
+                mpi.joined_model = ColumnStack()(zm)
 
         (
             params,
@@ -1016,11 +1019,15 @@ class BaseRunner(object):
             y_input
         )
 
-        joined = ColumnStack()(list(
-            filter(
+        joined_li = [markers, dists, nonlinear, groups, covariates]
+        if len(joined_li) == 0:
+            joined = joined_li[0]
+        else:
+            joined_li = list(filter(
                 lambda x: x is not None,
                 [markers, dists, nonlinear, groups, covariates]
-            )))
+            ))
+            joined = ColumnStack()(joined_li)
 
         interactions = ffmap(
             self.interactions_transformer.model(params),
