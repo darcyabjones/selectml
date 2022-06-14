@@ -5,6 +5,7 @@ params.outdir = "results"
 params.ntrials = 200
 params.infiles = false
 params.task = "regression"
+params.help = false
 
 def helpMessage() {
     log.info "# autoselect"
