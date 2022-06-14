@@ -4,6 +4,7 @@ nextflow.enable.dsl = 2
 params.outdir = "results"
 params.ntrials = 200
 params.infiles = false
+params.task = "regression"
 
 def helpMessage() {
     log.info "# autoselect"
@@ -71,10 +72,10 @@ process eval {
     val task_
 
     output:
-    path "${infile.simpleName}_${task}_"
+    path "${infile.simpleName}_${task_}_${model}"
 
     script:
-    output_dir = "${infile.simpleName}"
+    output_dir = "${infile.simpleName}_${task_}_${model}"
     """
     tar --dereference --strip-components=1 -zxf "${infile}"
 
@@ -139,7 +140,7 @@ workflow {
     models = Channel.of( "sgd" )
     // models = Channel.of( "sgd", "bglr", "knn", "xgb" )
 
-    combined = infile.combine(models)
+    combined = infiles.combine(models)
     results = model(combined, params.task, params.ntrials)
     stats = eval(results, params.task)
 }
