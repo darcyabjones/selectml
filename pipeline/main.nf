@@ -2,9 +2,10 @@
 
 nextflow.enable.dsl = 2
 params.outdir = "results"
-params.ntrials = 200
+params.ntrials = 300
 params.infiles = false
 params.task = "regression"
+params.help = false
 
 def helpMessage() {
     log.info "# autoselect"
@@ -137,8 +138,9 @@ workflow {
 
     infiles = Channel.fromPath( params.infiles, checkIfExists: true).map { f -> [f.simpleName, f] }
 
-    models = Channel.of( "sgd" )
+    // models = Channel.of( "sgd" )
     // models = Channel.of( "sgd", "bglr", "knn", "xgb" )
+    models = Channel.of( "bglr", "knn", "xgb" )
 
     combined = infiles.combine(models)
     results = model(combined, params.task, params.ntrials)
