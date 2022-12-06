@@ -25,13 +25,15 @@ def generate_sample_data(
     nmarkers,
     ngroups,
     ncovariates,
+    ploidy=2,
     covariate_std=None,
     seed=None
 ):
 
     rng = np.random.default_rng(seed)
     marker_effects = rng.normal(scale=1/nmarkers, size=(1, nmarkers))
-    markers = rng.choice([0, 1, 2], size=(n, nmarkers))
+    marker_options = list(range(ploidy + 1))
+    markers = rng.choice(marker_options, size=(n, nmarkers))
 
     y = markers.dot(marker_effects.T)
 

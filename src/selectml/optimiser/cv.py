@@ -17,6 +17,22 @@ if TYPE_CHECKING:
 
 from selectml.higher import fmap
 
+def gen_splits(data, k: int, seed: int) -> np.ndarray:
+    # TODO Set a numpy array with integers
+    cv = KFold(
+        n_splits=k,
+        shuffle=True,
+        random_state=seed
+    )
+
+    ints = cv.split(data)
+
+    splits = np.zeros(data.shape[0])
+    for i, (_, cv_ints) in enumerate(ints):
+        splits[cv_ints] = i
+
+    return splits
+
 
 class Dataset(NamedTuple):
 
@@ -58,6 +74,7 @@ class CVData(object):
         covariates: "Optional[npt.ArrayLike]",
         y: "npt.ArrayLike",
         nsplits: int = 5,
+        cv: "Optional[npt.ArrayLike]" = None,
         seed: "Optional[int]" = None
     ):
         self.markers = np.asarray(markers)
@@ -67,7 +84,12 @@ class CVData(object):
 
         self.rng = random.Random(seed)
 
-        self.nsplits = nsplits
+        if cv is not None:
+            self.cv = np.array(cv)
+            self._nsplits = len(np.unique(self.cv))
+        else:
+            self.cv = None
+            self.nsplits = nsplits
         return
 
     def reset(self):
@@ -82,20 +104,12 @@ class CVData(object):
         self._nsplits = value
         self._gen_splits(value)
 
-    def _gen_splits(self, k: int):
-        # TODO Set a numpy array with integers
-        cv = KFold(
-            n_splits=self.nsplits,
-            shuffle=True,
-            random_state=self.rng.getrandbits(32)
+    def _gen_splits(self):
+        self.splits = gen_splits(
+            self.markers,
+            self.nsplits,
+            self.rng.getrandbits(32)
         )
-
-        ints = cv.split(self.markers)
-
-        self.splits = np.zeros(self.markers.shape[0])
-        for i, (_, cv_ints) in enumerate(ints):
-            self.splits[cv_ints] = i
-
         return
 
     def __call__(self) -> "Iterator[Tuple[Dataset, Dataset]]":

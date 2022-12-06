@@ -17,6 +17,8 @@ from .subcommands.optimise import runner as optimise_runner
 from .subcommands.predict import cli as predict_cli
 from .subcommands.predict import runner as predict_runner
 
+from .subcommands.gen_test_data import cli as gen_cli
+from .subcommands.gen_test_data import runner as gen_runner
 
 __email__ = "darcy.ab.jones@gmail.com"
 
@@ -82,6 +84,15 @@ def cli(prog: str, args: List[str]) -> argparse.Namespace:
 
     predict_cli(predict_subparser)
 
+    gen_subparser = subparsers.add_parser(
+        "gen_test_data",
+        help=(
+            "Generate a dummy set of data."
+        )
+    )
+
+    gen_cli(gen_subparser)
+
     parsed = parser.parse_args(args)
 
     if parsed.subparser_name is None:
@@ -104,6 +115,9 @@ def main():  # noqa
 
         elif args.subparser_name == "predict":
             predict_runner(args)
+
+        elif args.subparser_name == "gen_test_data":
+            gen_runner(args)
 
     except OSError as e:
         msg = (

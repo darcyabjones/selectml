@@ -31,6 +31,12 @@ if TYPE_CHECKING:
 def cli(parser: argparse.ArgumentParser) -> None:
 
     parser.add_argument(
+        "database",
+        type=str,
+        help="The database URI."
+    )
+
+    parser.add_argument(
         "task",
         type=Stats.from_string,
         choices=list(Stats),
@@ -91,6 +97,13 @@ def cli(parser: argparse.ArgumentParser) -> None:
     )
 
     parser.add_argument(
+        "--study-name",
+        type=str,
+        default=None,
+        help="Name the study this instead of the default based on parameters."
+    )
+
+    parser.add_argument(
         "-o", "--outfile",
         type=argparse.FileType('w'),
         default=sys.stdout,
@@ -110,13 +123,6 @@ def cli(parser: argparse.ArgumentParser) -> None:
         type=argparse.FileType("rb"),
         default=None,
         help="Where to continue from."
-    )
-
-    parser.add_argument(
-        "--pickle",
-        type=argparse.FileType("wb"),
-        default=None,
-        help="Where to save the trials to."
     )
 
     parser.add_argument(
@@ -316,19 +322,14 @@ def runner(args: argparse.Namespace) -> None:
     else:
         direction = "maximize"
 
+
     study = optuna.create_study(
         direction=direction,
         load_if_exists=True,
     )
 
-    if args.continue_ is not None:
-        import pickle
-        existing_trials = pickle.load(args.continue_)
-        study.add_trials(existing_trials)
-    else:
-        # Expect that these have already been run.
-        for trial in model.starting_points():
-            study.enqueue_trial(trial)
+    for trial in model.starting_points():
+        study.enqueue_trial(trial, skip_if_exists=True)
 
     warnings.filterwarnings("ignore")
 

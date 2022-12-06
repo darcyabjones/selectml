@@ -377,7 +377,7 @@ class OptimiseTarget(OptimiseBase):
             params[f"{self.name}_nquantiles"] = trial.suggest_int(
                 f"{self.name}_nquantiles",
                 min([100, round(nsamples / 2)]),
-                min([1000, nsamples])
+                min([1000, nsamples]),
             )
 
         return params
